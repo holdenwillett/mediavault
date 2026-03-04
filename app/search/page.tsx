@@ -1,57 +1,51 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import type { MediaSearchItem, MediaSearchResponse } from "@/lib/media/types";
 
-type Media = {
-  id: number;
-  title?: string;
-  name?: string;
-  poster_path?: string | null;
-  media_type: "movie" | "tv";
-  vote_average?: number;
-  popularity?: number;
-  release_date?: string;
-  first_air_date?: string;
-};
-
-function mergeUnique(existing: Media[], incoming: Media[]) {
-  const seen = new Set(existing.map((item) => `${item.media_type}:${item.id}`));
+function mergeUnique(existing: MediaSearchItem[], incoming: MediaSearchItem[]) {
+  const seen = new Set(existing.map((item) => item.id));
   const merged = [...existing];
 
   for (const item of incoming) {
-    const key = `${item.media_type}:${item.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
     merged.push(item);
   }
 
   return merged;
 }
 
-function MediaCard({ item }: { item: Media }) {
-  const title = item.title || item.name || "Untitled";
-  const poster = item.poster_path
-    ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
-    : null;
+function MediaCard({ item }: { item: MediaSearchItem }) {
+  const poster = item.posterPath ? `https://image.tmdb.org/t/p/w500${item.posterPath}` : null;
+  const mediaTypeLabel =
+    item.mediaType === "tv" ? "TV" : item.mediaType.charAt(0).toUpperCase() + item.mediaType.slice(1);
 
   return (
-    <Link href={`/${item.media_type}/${item.id}`}>
+    <Link href={`/${item.mediaType}/${item.externalId}`}>
       <div className="bg-gray-900 p-2 rounded hover:scale-105 transition cursor-pointer">
         {poster ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={poster} className="rounded" alt={title} />
+          <img src={poster} className="rounded" alt={item.title} />
         ) : (
           <div className="aspect-[2/3] rounded bg-zinc-800 flex items-center justify-center text-gray-400 text-sm">
             No poster
           </div>
         )}
 
-        <p className="mt-2 text-sm">{title}</p>
+        <p className="mt-2 text-sm">{item.title}</p>
 
-        {typeof item.vote_average === "number" && (
-          <p className="text-xs text-gray-400">⭐ {item.vote_average.toFixed(1)}</p>
-        )}
+        <div className="mt-1 flex items-center justify-between gap-2">
+          {typeof item.rating === "number" ? (
+            <p className="text-xs text-gray-400">{"\u2b50"} {item.rating.toFixed(1)}</p>
+          ) : (
+            <span />
+          )}
+          <span className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800 text-zinc-300 uppercase tracking-wide">
+            {mediaTypeLabel}
+          </span>
+        </div>
       </div>
     </Link>
   );
@@ -59,12 +53,13 @@ function MediaCard({ item }: { item: Media }) {
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
-  const [top, setTop] = useState<Media[]>([]);
-  const [related, setRelated] = useState<Media[]>([]);
+  const [top, setTop] = useState<MediaSearchItem[]>([]);
+  const [related, setRelated] = useState<MediaSearchItem[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     setPage(1);
@@ -72,6 +67,9 @@ export default function SearchPage() {
 
   useEffect(() => {
     const q = query.trim();
+    const currentPage = page;
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
 
     if (q.length < 2) {
       setTop([]);
@@ -87,22 +85,27 @@ export default function SearchPage() {
         setLoading(true);
         setError(null);
 
-        const res = await fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}&page=${page}`);
-        const data = await res.json();
+        const res = await fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as MediaSearchResponse;
 
-        if (!res.ok || data?.error) {
+        if (!res.ok || data.error) {
           setTop([]);
           setRelated([]);
           setHasMore(false);
-          setError(data?.error || "Search failed");
+          setError(data.error || "Search failed");
           return;
         }
 
-        const nextTop = (data.top ?? []) as Media[];
-        const nextRelated = (data.related ?? []) as Media[];
-        setHasMore(Boolean(data?.hasMore));
+        const nextTop = data.top ?? [];
+        const nextRelated = data.related ?? [];
+        setHasMore(Boolean(data.hasMore));
 
-        if (page === 1) {
+        // Ignore stale responses from an older request.
+        if (requestId !== requestIdRef.current) return;
+
+        if (currentPage === 1) {
           setTop(nextTop);
           setRelated(nextRelated);
         } else {
@@ -110,8 +113,9 @@ export default function SearchPage() {
           setRelated((prev) => mergeUnique(prev, nextRelated));
         }
       } catch (e: unknown) {
+        if (controller.signal.aborted) return;
         const message = e instanceof Error ? e.message : "Network error";
-        if (page === 1) {
+        if (currentPage === 1) {
           setTop([]);
           setRelated([]);
           setHasMore(false);
@@ -122,7 +126,10 @@ export default function SearchPage() {
       }
     }, 350);
 
-    return () => clearTimeout(timeout);
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
   }, [query, page]);
 
   return (
@@ -143,7 +150,7 @@ export default function SearchPage() {
 
       <div className="text-sm text-gray-400 mb-6">
         {query.trim().length < 2 && "Type at least 2 characters"}
-        {loading && "Searching…"}
+        {loading && "Searching..."}
         {error && <span className="text-red-400">{error}</span>}
       </div>
 
@@ -152,7 +159,7 @@ export default function SearchPage() {
           <h2 className="text-xl font-semibold mb-3">Top matches</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
             {top.map((item) => (
-              <MediaCard key={`${item.media_type}-${item.id}`} item={item} />
+              <MediaCard key={item.id} item={item} />
             ))}
           </div>
         </>
@@ -163,7 +170,7 @@ export default function SearchPage() {
           <h2 className="text-xl font-semibold mt-10 mb-3">Related</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
             {related.map((item) => (
-              <MediaCard key={`${item.media_type}-${item.id}`} item={item} />
+              <MediaCard key={item.id} item={item} />
             ))}
           </div>
         </>

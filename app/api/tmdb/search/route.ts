@@ -1,18 +1,6 @@
 import { NextResponse } from "next/server";
-
-type MediaType = "movie" | "tv";
-
-type TmdbItem = {
-  id: number;
-  media_type: MediaType;
-  popularity?: number;
-  vote_count?: number;
-  vote_average?: number;
-  poster_path?: string | null;
-  title?: string;
-  name?: string;
-  overview?: string;
-};
+import type { MediaSearchResponse } from "@/lib/media/types";
+import { normalizeTmdbSearchItem, type TmdbSearchItem } from "@/lib/media/adapters/tmdb";
 
 type TmdbKeyword = {
   id: number;
@@ -32,14 +20,14 @@ async function tmdbGet(path: string, apiKey: string): Promise<unknown | null> {
   return res.json();
 }
 
-function onlyMovieTv(items: unknown[] | undefined): TmdbItem[] {
+function onlyMovieTv(items: unknown[] | undefined): TmdbSearchItem[] {
   if (!items) return [];
-  return (items as TmdbItem[]).filter((r) => r.media_type === "movie" || r.media_type === "tv");
+  return (items as TmdbSearchItem[]).filter((r) => r.media_type === "movie" || r.media_type === "tv");
 }
 
-function dedupe(items: TmdbItem[]): TmdbItem[] {
+function dedupe(items: TmdbSearchItem[]): TmdbSearchItem[] {
   const seen = new Set<string>();
-  const out: TmdbItem[] = [];
+  const out: TmdbSearchItem[] = [];
 
   for (const item of items) {
     const key = `${item.media_type}:${item.id}`;
@@ -51,11 +39,11 @@ function dedupe(items: TmdbItem[]): TmdbItem[] {
   return out;
 }
 
-function itemKey(item: TmdbItem): string {
+function itemKey(item: TmdbSearchItem): string {
   return `${item.media_type}:${item.id}`;
 }
 
-function passesQuality(it: TmdbItem): boolean {
+function passesQuality(it: TmdbSearchItem): boolean {
   const pop = it.popularity ?? 0;
   const votes = it.vote_count ?? 0;
   const hasPoster = !!it.poster_path;
@@ -66,7 +54,7 @@ function passesQuality(it: TmdbItem): boolean {
   return true;
 }
 
-function score(it: TmdbItem, qLower: string): number {
+function score(it: TmdbSearchItem, qLower: string): number {
   const title = (it.title ?? it.name ?? "").toLowerCase();
   const overview = (it.overview ?? "").toLowerCase();
   const pop = it.popularity ?? 0;
@@ -88,18 +76,18 @@ function score(it: TmdbItem, qLower: string): number {
   return s;
 }
 
-function isQueryRelevant(it: TmdbItem, qLower: string): boolean {
+function isQueryRelevant(it: TmdbSearchItem, qLower: string): boolean {
   const title = (it.title ?? it.name ?? "").toLowerCase();
   const overview = (it.overview ?? "").toLowerCase();
   return title.includes(qLower) || overview.includes(qLower);
 }
 
-async function fetchSeedRecommendations(seed: TmdbItem, apiKey: string): Promise<TmdbItem[]> {
+async function fetchSeedRecommendations(seed: TmdbSearchItem, apiKey: string): Promise<TmdbSearchItem[]> {
   const [recommendationsPage1Response, recommendationsPage2Response, similarResponse] = (await Promise.all([
     tmdbGet(`/${seed.media_type}/${seed.id}/recommendations?language=en-US&page=1`, apiKey),
     tmdbGet(`/${seed.media_type}/${seed.id}/recommendations?language=en-US&page=2`, apiKey),
     tmdbGet(`/${seed.media_type}/${seed.id}/similar?language=en-US&page=1`, apiKey),
-  ])) as [TmdbResponse<TmdbItem> | null, TmdbResponse<TmdbItem> | null, TmdbResponse<TmdbItem> | null];
+  ])) as [TmdbResponse<TmdbSearchItem> | null, TmdbResponse<TmdbSearchItem> | null, TmdbResponse<TmdbSearchItem> | null];
 
   const recommendationsPage1 = (recommendationsPage1Response?.results ?? []).map((item) => ({
     ...item,
@@ -117,12 +105,12 @@ async function fetchSeedRecommendations(seed: TmdbItem, apiKey: string): Promise
   return [...recommendationsPage1, ...recommendationsPage2, ...similar];
 }
 
-function titleHasQuery(it: TmdbItem, qLower: string): boolean {
+function titleHasQuery(it: TmdbSearchItem, qLower: string): boolean {
   const title = (it.title ?? it.name ?? "").toLowerCase();
   return title.includes(qLower);
 }
 
-function pickSeedItems(items: TmdbItem[], qLower: string): TmdbItem[] {
+function pickSeedItems(items: TmdbSearchItem[], qLower: string): TmdbSearchItem[] {
   const withQueryTitle = dedupe(items).filter((item) => titleHasQuery(item, qLower));
   const movies = withQueryTitle.filter((item) => item.media_type === "movie");
   const tv = withQueryTitle.filter((item) => item.media_type === "tv");
@@ -136,14 +124,21 @@ export async function GET(req: Request) {
   const q = (searchParams.get("q") || "").trim();
   const rawPage = Number(searchParams.get("page") || "1");
   const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
-  if (q.length < 2) return NextResponse.json({ top: [], related: [] });
+  if (q.length < 2) {
+    const empty: MediaSearchResponse = { top: [], related: [], page, hasMore: false };
+    return NextResponse.json(empty);
+  }
 
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "TMDB_API_KEY is missing in .env.local" },
-      { status: 500 }
-    );
+    const error: MediaSearchResponse = {
+      top: [],
+      related: [],
+      page,
+      hasMore: false,
+      error: "TMDB_API_KEY is missing in .env.local",
+    };
+    return NextResponse.json(error, { status: 500 });
   }
 
   const qLower = q.toLowerCase();
@@ -156,7 +151,7 @@ export async function GET(req: Request) {
 
   const textMatches = multiPages
     .flatMap((page) => {
-      const response = page as TmdbResponse<TmdbItem> | null;
+      const response = page as TmdbResponse<TmdbSearchItem> | null;
       return onlyMovieTv(response?.results);
     })
     .filter(passesQuality);
@@ -171,7 +166,7 @@ export async function GET(req: Request) {
     .map((k) => k.id)
     .filter(Boolean);
 
-  let keywordMatches: TmdbItem[] = [];
+  let keywordMatches: TmdbSearchItem[] = [];
 
   if (keywordIds.length > 0) {
     const withKeywords = keywordIds.join(",");
@@ -187,11 +182,11 @@ export async function GET(req: Request) {
       ),
     ]);
 
-    const movieResults = ((movieDiscover as TmdbResponse<TmdbItem> | null)?.results ?? []).map((item) => ({
+    const movieResults = ((movieDiscover as TmdbResponse<TmdbSearchItem> | null)?.results ?? []).map((item) => ({
       ...item,
       media_type: "movie" as const,
     }));
-    const tvResults = ((tvDiscover as TmdbResponse<TmdbItem> | null)?.results ?? []).map((item) => ({
+    const tvResults = ((tvDiscover as TmdbResponse<TmdbSearchItem> | null)?.results ?? []).map((item) => ({
       ...item,
       media_type: "tv" as const,
     }));
@@ -200,7 +195,7 @@ export async function GET(req: Request) {
   }
 
   // Pull recommendation-based franchise results from top seeds on page 1.
-  let recommendationMatches: TmdbItem[] = [];
+  let recommendationMatches: TmdbSearchItem[] = [];
   const recommendationStrength = new Map<string, number>();
   if (page === 1) {
     const seeds = pickSeedItems(
@@ -216,7 +211,8 @@ export async function GET(req: Request) {
     recommendationMatches = dedupe(recRaw);
   }
 
-  const rank = (item: TmdbItem) => score(item, qLower) + (recommendationStrength.get(itemKey(item)) ?? 0) * 400;
+  const rank = (item: TmdbSearchItem) =>
+    score(item, qLower) + (recommendationStrength.get(itemKey(item)) ?? 0) * 400;
 
   const combined = dedupe([...textMatches, ...keywordMatches, ...recommendationMatches]).sort(
     (a, b) => rank(b) - rank(a)
@@ -233,5 +229,12 @@ export async function GET(req: Request) {
   const related = dedupe([...relevant.slice(20), ...recommendationRelated, ...remainingRelated]).slice(0, 40);
   const hasMore = combined.length > 20 || textMatches.length > 0 || keywordMatches.length > 0;
 
-  return NextResponse.json({ top, related, page, hasMore });
+  const response: MediaSearchResponse = {
+    top: top.map(normalizeTmdbSearchItem),
+    related: related.map(normalizeTmdbSearchItem),
+    page,
+    hasMore,
+  };
+
+  return NextResponse.json(response);
 }
