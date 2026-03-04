@@ -19,6 +19,7 @@ export type TmdbSearchItem = {
 export function normalizeTmdbSearchItem(item: TmdbSearchItem): MediaSearchItem {
   const title = item.title ?? item.name ?? "Untitled";
   const releaseDate = item.release_date ?? item.first_air_date;
+  const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
 
   return {
     id: `tmdb:${item.media_type}:${item.id}`,
@@ -26,7 +27,7 @@ export function normalizeTmdbSearchItem(item: TmdbSearchItem): MediaSearchItem {
     mediaType: item.media_type,
     source: "tmdb",
     title,
-    posterPath: item.poster_path,
+    posterUrl,
     rating: item.vote_average,
     popularity: item.popularity,
     voteCount: item.vote_count,

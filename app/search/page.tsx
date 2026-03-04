@@ -17,8 +17,26 @@ function mergeUnique(existing: MediaSearchItem[], incoming: MediaSearchItem[]) {
   return merged;
 }
 
+function rankForDisplay(item: MediaSearchItem, qLower: string): number {
+  const title = item.title.toLowerCase();
+  const popularity = item.popularity ?? 0;
+  const voteCount = item.voteCount ?? 0;
+  const rating = item.rating ?? 0;
+
+  let s = 0;
+  if (title === qLower) s += 1200;
+  else if (title.startsWith(qLower)) s += 800;
+  else if (title.includes(qLower)) s += 500;
+
+  // Favor "best" results: stronger rating + larger vote count first.
+  s += rating * 65;
+  s += Math.log10(voteCount + 1) * 240;
+  s += Math.log10(popularity + 1) * 70;
+  return s;
+}
+
 function MediaCard({ item }: { item: MediaSearchItem }) {
-  const poster = item.posterPath ? `https://image.tmdb.org/t/p/w500${item.posterPath}` : null;
+  const poster = item.posterUrl ?? null;
   const mediaTypeLabel =
     item.mediaType === "tv" ? "TV" : item.mediaType.charAt(0).toUpperCase() + item.mediaType.slice(1);
 
@@ -26,8 +44,25 @@ function MediaCard({ item }: { item: MediaSearchItem }) {
     <Link href={`/${item.mediaType}/${item.externalId}`}>
       <div className="bg-gray-900 p-2 rounded hover:scale-105 transition cursor-pointer">
         {poster ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={poster} className="rounded" alt={item.title} />
+          <div className="aspect-[2/3] rounded overflow-hidden bg-zinc-800">
+            {item.mediaType === "game" ? (
+              <div className="relative w-full h-full">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={poster}
+                  className="absolute inset-0 w-full h-full object-cover scale-125 opacity-45"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <div className="absolute inset-0 bg-black/35" aria-hidden="true" />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={poster} className="relative w-full h-full object-contain p-1.5" alt={item.title} />
+              </div>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={poster} className="w-full h-full object-cover" alt={item.title} />
+            )}
+          </div>
         ) : (
           <div className="aspect-[2/3] rounded bg-zinc-800 flex items-center justify-center text-gray-400 text-sm">
             No poster
@@ -38,7 +73,7 @@ function MediaCard({ item }: { item: MediaSearchItem }) {
 
         <div className="mt-1 flex items-center justify-between gap-2">
           {typeof item.rating === "number" ? (
-            <p className="text-xs text-gray-400">{"\u2b50"} {item.rating.toFixed(1)}</p>
+            <p className="text-xs text-gray-400">{"\u2b50"} {item.rating.toFixed(1)}/10</p>
           ) : (
             <span />
           )}
@@ -85,22 +120,36 @@ export default function SearchPage() {
         setLoading(true);
         setError(null);
 
-        const res = await fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
-          signal: controller.signal,
-        });
-        const data = (await res.json()) as MediaSearchResponse;
+        const [tmdbRes, gamesRes] = await Promise.all([
+          fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
+            signal: controller.signal,
+          }),
+          fetch(`/api/games/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
+            signal: controller.signal,
+          }),
+        ]);
 
-        if (!res.ok || data.error) {
+        const [tmdbData, gamesData] = (await Promise.all([
+          tmdbRes.json(),
+          gamesRes.json(),
+        ])) as [MediaSearchResponse, MediaSearchResponse];
+
+        if ((!tmdbRes.ok && !gamesRes.ok) || (tmdbData.error && gamesData.error)) {
           setTop([]);
           setRelated([]);
           setHasMore(false);
-          setError(data.error || "Search failed");
+          setError(tmdbData.error || gamesData.error || "Search failed");
           return;
         }
 
-        const nextTop = data.top ?? [];
-        const nextRelated = data.related ?? [];
-        setHasMore(Boolean(data.hasMore));
+        const qLower = q.toLowerCase();
+        const nextTop = mergeUnique(tmdbData.top ?? [], gamesData.top ?? []).sort(
+          (a, b) => rankForDisplay(b, qLower) - rankForDisplay(a, qLower)
+        );
+        const nextRelated = mergeUnique(tmdbData.related ?? [], gamesData.related ?? []).sort(
+          (a, b) => rankForDisplay(b, qLower) - rankForDisplay(a, qLower)
+        );
+        setHasMore(Boolean(tmdbData.hasMore || gamesData.hasMore));
 
         // Ignore stale responses from an older request.
         if (requestId !== requestIdRef.current) return;
@@ -143,7 +192,7 @@ export default function SearchPage() {
 
       <input
         className="w-full p-3 rounded mb-3 bg-zinc-900 text-white placeholder:text-zinc-400 border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-500"
-        placeholder="Search movies or TV..."
+        placeholder="Search movies, TV, or games..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />

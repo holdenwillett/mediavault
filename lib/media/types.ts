@@ -1,6 +1,6 @@
 export type MediaType = "movie" | "tv" | "game" | "comic";
 
-export type MediaSource = "tmdb" | "igdb" | "comicvine";
+export type MediaSource = "tmdb" | "rawg" | "openlibrary" | "igdb" | "comicvine";
 
 export type MediaSearchItem = {
   id: string;
@@ -8,7 +8,7 @@ export type MediaSearchItem = {
   mediaType: MediaType;
   source: MediaSource;
   title: string;
-  posterPath?: string | null;
+  posterUrl?: string | null;
   rating?: number;
   popularity?: number;
   voteCount?: number;
