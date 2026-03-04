@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -10,7 +10,6 @@ type Mode = "signin" | "create";
 
 export default function AccountPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
@@ -19,8 +18,8 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const nextPath = searchParams.get("next");
-  const reason = searchParams.get("reason");
+  const [nextPath, setNextPath] = useState<string | null>(null);
+  const [reason, setReason] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -36,6 +35,13 @@ export default function AccountPage() {
 
     return () => subscription.unsubscribe();
   }, [supabase]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setNextPath(params.get("next"));
+    setReason(params.get("reason"));
+  }, []);
 
   useEffect(() => {
     if (!user || !nextPath) return;
@@ -54,6 +60,9 @@ export default function AccountPage() {
             </Link>
             <Link href="/collections" className="text-gray-300 hover:text-white">
               Collections
+            </Link>
+            <Link href="/profile" className="text-gray-300 hover:text-white">
+              Profile
             </Link>
           </div>
         </div>

@@ -167,6 +167,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
             type="button"
             className="px-3 py-1 rounded border border-zinc-700 text-sm hover:bg-zinc-800"
             onClick={async () => {
+              if (!existing) return;
               setError(null);
               const res = await fetch(`/api/collections/${encodeURIComponent(existing.id)}`, { method: "DELETE" });
               if (res.status === 401) {

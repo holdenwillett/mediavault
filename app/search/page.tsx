@@ -225,6 +225,9 @@ export default function SearchPage() {
           <Link href="/collections" className="text-gray-300 hover:text-white">
             Collections
           </Link>
+          <Link href="/profile" className="text-gray-300 hover:text-white">
+            Profile
+          </Link>
         </div>
       </div>
 
