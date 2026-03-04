@@ -20,12 +20,8 @@ function toCompositeId(mediaType: string, externalId: string | number): string {
   return `${mediaType}:${String(externalId)}`;
 }
 
-function mapRow(row: Record<string, unknown>) {
-  const listData = row.collection_lists as { name?: unknown } | { name?: unknown }[] | null;
-  const listName = Array.isArray(listData)
-    ? (listData[0]?.name as string | undefined)
-    : (listData?.name as string | undefined);
-
+function mapRow(row: Record<string, unknown>, listNameMap?: Map<string, string>) {
+  const listId = row.list_id ? String(row.list_id) : null;
   return {
     id: toCompositeId(String(row.media_type), String(row.external_id)),
     userId: String(row.user_id),
@@ -37,11 +33,29 @@ function mapRow(row: Record<string, unknown>) {
     rating: typeof row.rating === "number" ? row.rating : undefined,
     userRating: typeof row.user_rating === "number" ? row.user_rating : null,
     status: String(row.status),
-    listId: row.list_id ? String(row.list_id) : null,
-    listName: listName ?? null,
+    listId,
+    listName: listId ? (listNameMap?.get(listId) ?? null) : null,
     addedAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
+}
+
+async function fetchListNameMap(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  userId: string,
+  listIds: string[]
+) {
+  if (!listIds.length) return new Map<string, string>();
+
+  const { data, error } = await supabase.from("collection_lists").select("id, name").eq("user_id", userId).in("id", listIds);
+
+  if (error) throw error;
+
+  const map = new Map<string, string>();
+  for (const row of data ?? []) {
+    if (row.id && row.name) map.set(String(row.id), String(row.name));
+  }
+  return map;
 }
 
 function validateUserRating(userRating: unknown): number | null {
@@ -73,9 +87,7 @@ export async function GET(req: Request) {
 
   let query = supabase
     .from("collection_entries")
-    .select(
-      "user_id, media_type, external_id, source, title, poster_url, rating, user_rating, status, list_id, created_at, updated_at, collection_lists(name)"
-    )
+    .select("user_id, media_type, external_id, source, title, poster_url, rating, user_rating, status, list_id, created_at, updated_at")
     .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
 
@@ -84,8 +96,13 @@ export async function GET(req: Request) {
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const listIds = Array.from(
+    new Set(rows.map((row) => row.list_id).filter((id): id is string | number => Boolean(id)).map((id) => String(id)))
+  );
+  const listNameMap = await fetchListNameMap(supabase, user.id, listIds).catch(() => new Map<string, string>());
 
-  return NextResponse.json({ items: (data ?? []).map(mapRow) });
+  return NextResponse.json({ items: rows.map((row) => mapRow(row, listNameMap)) });
 }
 
 export async function POST(req: Request) {
@@ -140,11 +157,13 @@ export async function POST(req: Request) {
   const { data, error } = await supabase
     .from("collection_entries")
     .upsert(payload, { onConflict: "user_id,media_type,external_id" })
-    .select(
-      "user_id, media_type, external_id, source, title, poster_url, rating, user_rating, status, list_id, created_at, updated_at, collection_lists(name)"
-    )
+    .select("user_id, media_type, external_id, source, title, poster_url, rating, user_rating, status, list_id, created_at, updated_at")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ item: mapRow(data) });
+  const row = data as Record<string, unknown>;
+  const listId = row.list_id ? String(row.list_id) : null;
+  const listNameMap =
+    listId === null ? new Map<string, string>() : await fetchListNameMap(supabase, user.id, [listId]).catch(() => new Map<string, string>());
+  return NextResponse.json({ item: mapRow(row, listNameMap) });
 }
