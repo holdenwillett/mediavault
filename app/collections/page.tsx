@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import type { CollectionEntry, CollectionStatus } from "@/lib/account/types";
-import { getCollection, getProfile, removeCollectionItem, upsertCollectionItem } from "@/lib/account/storage";
 
 const STATUS_LABEL: Record<CollectionStatus, string> = {
   wishlist: "Wishlist",
@@ -14,9 +14,56 @@ const STATUS_LABEL: Record<CollectionStatus, string> = {
 const STATUS_ORDER: CollectionStatus[] = ["wishlist", "in_progress", "completed"];
 
 export default function CollectionsPage() {
-  const [, setRefresh] = useState(0);
-  const signedIn = Boolean(getProfile());
-  const items = getCollection();
+  const router = useRouter();
+  const [items, setItems] = useState<CollectionEntry[]>([]);
+  const [signedIn, setSignedIn] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      setSessionExpired(false);
+      try {
+        const res = await fetch("/api/collections", { cache: "no-store" });
+        if (!active) return;
+        if (res.status === 401) {
+          setSignedIn(false);
+          setSessionExpired(true);
+          setItems([]);
+          setLoading(false);
+          router.push("/account?next=/collections&reason=session-expired");
+          return;
+        }
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          setSignedIn(false);
+          setItems([]);
+          setError(data.error ?? "Could not load your collection.");
+          setLoading(false);
+          return;
+        }
+        const data = (await res.json()) as { items?: CollectionEntry[] };
+        setSignedIn(true);
+        setItems(data.items ?? []);
+        setLoading(false);
+      } catch {
+        if (!active) return;
+        setSignedIn(false);
+        setItems([]);
+        setError("Network error while loading your collection.");
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [reload, router]);
 
   const grouped = useMemo(() => {
     const byStatus: Record<CollectionStatus, CollectionEntry[]> = {
@@ -43,16 +90,27 @@ export default function CollectionsPage() {
         </div>
       </div>
 
-      {!signedIn ? (
+      {loading ? <p className="text-zinc-400">Loading...</p> : null}
+
+      {!loading && error ? (
+        <div className="rounded-lg border border-red-900/40 bg-red-950/30 p-4 mb-5">
+          <p className="text-red-300">{error}</p>
+        </div>
+      ) : null}
+
+      {!loading && !signedIn ? (
         <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <p className="text-zinc-300">Create an account first to track a collection.</p>
+          <p className="text-zinc-300">
+            {sessionExpired ? "Your session expired. Sign in again to view your collection." : "Sign in first to track a collection."}
+          </p>
           <Link href="/account" className="text-white underline">
             Go to Account
           </Link>
         </div>
       ) : null}
 
-      {signedIn &&
+      {!loading &&
+        signedIn &&
         STATUS_ORDER.map((status) => (
           <section key={status} className="mt-8">
             <h2 className="text-xl font-semibold mb-3">{STATUS_LABEL[status]}</h2>
@@ -70,21 +128,21 @@ export default function CollectionsPage() {
                       <button
                         type="button"
                         className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
-                        onClick={() => {
+                        onClick={async () => {
                           const nextStatus: CollectionStatus =
                             status === "wishlist" ? "in_progress" : status === "in_progress" ? "completed" : "wishlist";
-                          upsertCollectionItem(
-                            {
-                              mediaType: item.mediaType,
-                              externalId: item.externalId,
-                              source: item.source,
-                              title: item.title,
-                              posterUrl: item.posterUrl,
-                              rating: item.rating,
-                            },
-                            nextStatus
-                          );
-                          setRefresh((v) => v + 1);
+                          const res = await fetch(`/api/collections/${encodeURIComponent(item.id)}`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ status: nextStatus }),
+                          });
+                          if (res.status === 401) {
+                            setSignedIn(false);
+                            setSessionExpired(true);
+                            router.push("/account?next=/collections&reason=session-expired");
+                            return;
+                          }
+                          setReload((v) => v + 1);
                         }}
                       >
                         Move
@@ -92,9 +150,15 @@ export default function CollectionsPage() {
                       <button
                         type="button"
                         className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
-                        onClick={() => {
-                          removeCollectionItem(item.mediaType, item.externalId);
-                          setRefresh((v) => v + 1);
+                        onClick={async () => {
+                          const res = await fetch(`/api/collections/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+                          if (res.status === 401) {
+                            setSignedIn(false);
+                            setSessionExpired(true);
+                            router.push("/account?next=/collections&reason=session-expired");
+                            return;
+                          }
+                          setReload((v) => v + 1);
                         }}
                       >
                         Remove

@@ -1,18 +1,47 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { clearProfile, createAccount, getProfile, signIn } from "@/lib/account/storage";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type Mode = "signin" | "create";
 
 export default function AccountPage() {
-  const [, setRefresh] = useState(0);
-  const profile = getProfile();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [mode, setMode] = useState<Mode>("signin");
-  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const nextPath = searchParams.get("next");
+  const reason = searchParams.get("reason");
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user ?? null);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!user || !nextPath) return;
+    if (!nextPath.startsWith("/")) return;
+    router.replace(nextPath);
+  }, [nextPath, router, user]);
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -30,24 +59,34 @@ export default function AccountPage() {
         </div>
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          {profile ? (
+          {reason === "session-expired" && !user ? (
+            <p className="text-sm text-amber-300 mb-3">Your session expired. Sign in again to continue.</p>
+          ) : null}
+
+          {!supabase ? (
+            <p className="text-sm text-red-400">
+              Supabase is not configured. Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to
+              `.env.local`.
+            </p>
+          ) : null}
+
+          {supabase && user ? (
             <>
               <p className="text-zinc-300">Signed in as</p>
-              <p className="text-2xl font-semibold mt-1">{profile.name}</p>
+              <p className="text-2xl font-semibold mt-1">{user.email}</p>
               <button
                 type="button"
                 className="mt-4 px-4 py-2 rounded border border-zinc-700 hover:bg-zinc-800"
-                onClick={() => {
-                  clearProfile();
-                  setPassword("");
+                onClick={async () => {
                   setError(null);
-                  setRefresh((v) => v + 1);
+                  setNotice(null);
+                  await supabase.auth.signOut();
                 }}
               >
                 Sign Out
               </button>
             </>
-          ) : (
+          ) : supabase ? (
             <>
               <div className="mb-4 flex gap-2">
                 <button
@@ -66,12 +105,13 @@ export default function AccountPage() {
                 </button>
               </div>
 
-              <label className="block text-sm text-zinc-300 mb-2">Display name</label>
+              <label className="block text-sm text-zinc-300 mb-2">Email</label>
               <input
                 className="w-full p-3 rounded bg-zinc-800 border border-zinc-700"
-                placeholder="Enter your name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+                placeholder="you@example.com"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
               />
 
               <label className="block text-sm text-zinc-300 mb-2 mt-4">Password</label>
@@ -85,28 +125,45 @@ export default function AccountPage() {
 
               <button
                 type="button"
-                className="mt-4 px-4 py-2 rounded bg-white text-black hover:bg-zinc-200"
-                onClick={() => {
+                className="mt-4 px-4 py-2 rounded bg-white text-black hover:bg-zinc-200 disabled:opacity-50"
+                disabled={loading}
+                onClick={async () => {
+                  setLoading(true);
                   setError(null);
-                  const result = mode === "create" ? createAccount(name, password) : signIn(name, password);
-                  if (result.error) {
-                    setError(result.error);
-                    return;
+                  setNotice(null);
+                  try {
+                    if (mode === "create") {
+                      const emailRedirectTo =
+                        typeof window !== "undefined" ? `${window.location.origin}/account` : undefined;
+                      const { error: signUpError } = await supabase.auth.signUp({
+                        email,
+                        password,
+                        options: { emailRedirectTo },
+                      });
+                      if (signUpError) {
+                        setError(signUpError.message);
+                        return;
+                      }
+                      setNotice("Account created. Check your email if confirmation is required.");
+                    } else {
+                      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+                      if (signInError) {
+                        setError(signInError.message);
+                        return;
+                      }
+                    }
+                  } finally {
+                    setLoading(false);
                   }
-                  setName(result.profile?.name ?? "");
-                  setPassword("");
-                  setRefresh((v) => v + 1);
                 }}
               >
-                {mode === "create" ? "Create Account" : "Sign In"}
+                {loading ? "Please wait..." : mode === "create" ? "Create Account" : "Sign In"}
               </button>
 
               {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
-              <p className="mt-3 text-xs text-zinc-500">
-                Password auth is currently local to this browser/device only.
-              </p>
+              {notice ? <p className="mt-3 text-sm text-emerald-400">{notice}</p> : null}
             </>
-          )}
+          ) : null}
         </div>
       </div>
     </main>
