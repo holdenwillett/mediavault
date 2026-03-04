@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { MediaSearchItem, MediaSearchResponse } from "@/lib/media/types";
+import type { MediaSearchItem, MediaSearchResponse, MediaType } from "@/lib/media/types";
+
+type SearchFilter = "all" | MediaType;
+const FILTERS: SearchFilter[] = ["all", "movie", "tv", "game"];
 
 function mergeUnique(existing: MediaSearchItem[], incoming: MediaSearchItem[]) {
   const seen = new Set(existing.map((item) => item.id));
@@ -28,11 +31,14 @@ function rankForDisplay(item: MediaSearchItem, qLower: string): number {
   else if (title.startsWith(qLower)) s += 800;
   else if (title.includes(qLower)) s += 500;
 
-  // Favor "best" results: stronger rating + larger vote count first.
   s += rating * 65;
   s += Math.log10(voteCount + 1) * 240;
   s += Math.log10(popularity + 1) * 70;
   return s;
+}
+
+function emptyResponse(page: number): MediaSearchResponse {
+  return { top: [], related: [], page, hasMore: false };
 }
 
 function MediaCard({ item }: { item: MediaSearchItem }) {
@@ -88,6 +94,7 @@ function MediaCard({ item }: { item: MediaSearchItem }) {
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<SearchFilter>("all");
   const [top, setTop] = useState<MediaSearchItem[]>([]);
   const [related, setRelated] = useState<MediaSearchItem[]>([]);
   const [page, setPage] = useState(1);
@@ -98,7 +105,7 @@ export default function SearchPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [query]);
+  }, [query, filter]);
 
   useEffect(() => {
     const q = query.trim();
@@ -120,21 +127,42 @@ export default function SearchPage() {
         setLoading(true);
         setError(null);
 
-        const [tmdbRes, gamesRes] = await Promise.all([
-          fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
-            signal: controller.signal,
-          }),
-          fetch(`/api/games/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
-            signal: controller.signal,
-          }),
-        ]);
+        const requests: Array<Promise<Response>> = [];
+        const sourceKeys: Array<"tmdb" | "games"> = [];
 
-        const [tmdbData, gamesData] = (await Promise.all([
-          tmdbRes.json(),
-          gamesRes.json(),
-        ])) as [MediaSearchResponse, MediaSearchResponse];
+        if (filter === "all" || filter === "movie" || filter === "tv") {
+          sourceKeys.push("tmdb");
+          requests.push(
+            fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
+              signal: controller.signal,
+            })
+          );
+        }
+        if (filter === "all" || filter === "game") {
+          sourceKeys.push("games");
+          requests.push(
+            fetch(`/api/games/search?q=${encodeURIComponent(q)}&page=${currentPage}`, {
+              signal: controller.signal,
+            })
+          );
+        }
+        const responses = await Promise.all(requests);
+        const payloads = (await Promise.all(responses.map((r) => r.json()))) as MediaSearchResponse[];
 
-        if ((!tmdbRes.ok && !gamesRes.ok) || (tmdbData.error && gamesData.error)) {
+        const bySource: Record<"tmdb" | "games", MediaSearchResponse> = {
+          tmdb: emptyResponse(currentPage),
+          games: emptyResponse(currentPage),
+        };
+        sourceKeys.forEach((key, i) => {
+          bySource[key] = payloads[i];
+        });
+
+        const tmdbData = bySource.tmdb;
+        const gamesData = bySource.games;
+        const allFailed = responses.length > 0 && responses.every((r) => !r.ok);
+        const allErrored = Boolean(tmdbData.error && gamesData.error);
+
+        if (allFailed || allErrored) {
           setTop([]);
           setRelated([]);
           setHasMore(false);
@@ -143,15 +171,17 @@ export default function SearchPage() {
         }
 
         const qLower = q.toLowerCase();
-        const nextTop = mergeUnique(tmdbData.top ?? [], gamesData.top ?? []).sort(
-          (a, b) => rankForDisplay(b, qLower) - rankForDisplay(a, qLower)
-        );
-        const nextRelated = mergeUnique(tmdbData.related ?? [], gamesData.related ?? []).sort(
-          (a, b) => rankForDisplay(b, qLower) - rankForDisplay(a, qLower)
-        );
+        const rawTop = mergeUnique(tmdbData.top ?? [], gamesData.top ?? []);
+        const rawRelated = mergeUnique(tmdbData.related ?? [], gamesData.related ?? []);
+
+        const filteredTop = filter === "all" ? rawTop : rawTop.filter((item) => item.mediaType === filter);
+        const filteredRelated =
+          filter === "all" ? rawRelated : rawRelated.filter((item) => item.mediaType === filter);
+
+        const nextTop = filteredTop.sort((a, b) => rankForDisplay(b, qLower) - rankForDisplay(a, qLower));
+        const nextRelated = filteredRelated.sort((a, b) => rankForDisplay(b, qLower) - rankForDisplay(a, qLower));
         setHasMore(Boolean(tmdbData.hasMore || gamesData.hasMore));
 
-        // Ignore stale responses from an older request.
         if (requestId !== requestIdRef.current) return;
 
         if (currentPage === 1) {
@@ -179,15 +209,23 @@ export default function SearchPage() {
       controller.abort();
       clearTimeout(timeout);
     };
-  }, [query, page]);
+  }, [query, page, filter]);
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Search Media</h1>
-        <Link href="/" className="text-gray-300 hover:text-white">
-          Home
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/" className="text-gray-300 hover:text-white">
+            Home
+          </Link>
+          <Link href="/account" className="text-gray-300 hover:text-white">
+            Account
+          </Link>
+          <Link href="/collections" className="text-gray-300 hover:text-white">
+            Collections
+          </Link>
+        </div>
       </div>
 
       <input
@@ -196,6 +234,27 @@ export default function SearchPage() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {FILTERS.map((f) => {
+          const label = f === "all" ? "All" : f === "tv" ? "TV" : f.charAt(0).toUpperCase() + f.slice(1);
+          const active = filter === f;
+          return (
+            <button
+              key={f}
+              type="button"
+              className={`px-3 py-1 rounded-full text-sm border ${
+                active
+                  ? "bg-white text-black border-white"
+                  : "bg-zinc-900 text-zinc-200 border-zinc-700 hover:bg-zinc-800"
+              }`}
+              onClick={() => setFilter(f)}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
 
       <div className="text-sm text-gray-400 mb-6">
         {query.trim().length < 2 && "Type at least 2 characters"}

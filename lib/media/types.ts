@@ -1,6 +1,6 @@
-export type MediaType = "movie" | "tv" | "game" | "comic";
+export type MediaType = "movie" | "tv" | "game";
 
-export type MediaSource = "tmdb" | "rawg" | "openlibrary" | "igdb" | "comicvine";
+export type MediaSource = "tmdb" | "rawg" | "igdb" | "comicvine";
 
 export type MediaSearchItem = {
   id: string;

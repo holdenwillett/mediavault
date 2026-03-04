@@ -9,6 +9,22 @@ type RawgSearchResponse = {
 
 const RAWG = "https://api.rawg.io/api";
 
+function normalizeText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function isStrongTitleMatch(game: RawgGame, qLower: string): boolean {
+  const title = normalizeText(game.name ?? "");
+  const query = normalizeText(qLower);
+  if (!title || !query) return false;
+  if (title === query) return true;
+  if (title.includes(query)) return true;
+
+  const tokens = query.split(" ").filter((t) => t.length >= 2);
+  if (tokens.length === 0) return false;
+  return tokens.every((token) => title.includes(token));
+}
+
 function passesQuality(game: RawgGame): boolean {
   const hasPoster = Boolean(game.background_image);
   const added = game.added ?? 0;
@@ -84,7 +100,7 @@ export async function GET(req: Request) {
   const data = (await res.json()) as RawgSearchResponse;
   const qLower = q.toLowerCase();
   const scored = (data.results ?? [])
-    .filter(passesQuality)
+    .filter((g) => passesQuality(g) || isStrongTitleMatch(g, qLower))
     .sort((a, b) => score(b, qLower) - score(a, qLower));
 
   const top = scored.slice(0, 10).map(normalizeRawgGame);
