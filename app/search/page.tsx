@@ -15,6 +15,20 @@ type Media = {
   first_air_date?: string;
 };
 
+function mergeUnique(existing: Media[], incoming: Media[]) {
+  const seen = new Set(existing.map((item) => `${item.media_type}:${item.id}`));
+  const merged = [...existing];
+
+  for (const item of incoming) {
+    const key = `${item.media_type}:${item.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+
+  return merged;
+}
+
 function MediaCard({ item }: { item: Media }) {
   const title = item.title || item.name || "Untitled";
   const poster = item.poster_path
@@ -47,8 +61,14 @@ export default function SearchPage() {
   const [query, setQuery] = useState("");
   const [top, setTop] = useState<Media[]>([]);
   const [related, setRelated] = useState<Media[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
 
   useEffect(() => {
     const q = query.trim();
@@ -56,6 +76,7 @@ export default function SearchPage() {
     if (q.length < 2) {
       setTop([]);
       setRelated([]);
+      setHasMore(false);
       setError(null);
       setLoading(false);
       return;
@@ -66,22 +87,35 @@ export default function SearchPage() {
         setLoading(true);
         setError(null);
 
-        const res = await fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/tmdb/search?q=${encodeURIComponent(q)}&page=${page}`);
         const data = await res.json();
 
         if (!res.ok || data?.error) {
           setTop([]);
           setRelated([]);
+          setHasMore(false);
           setError(data?.error || "Search failed");
           return;
         }
 
-        setTop(data.top ?? []);
-        setRelated(data.related ?? []);
+        const nextTop = (data.top ?? []) as Media[];
+        const nextRelated = (data.related ?? []) as Media[];
+        setHasMore(Boolean(data?.hasMore));
+
+        if (page === 1) {
+          setTop(nextTop);
+          setRelated(nextRelated);
+        } else {
+          setTop((prev) => mergeUnique(prev, nextTop));
+          setRelated((prev) => mergeUnique(prev, nextRelated));
+        }
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : "Network error";
-        setTop([]);
-        setRelated([]);
+        if (page === 1) {
+          setTop([]);
+          setRelated([]);
+          setHasMore(false);
+        }
         setError(message);
       } finally {
         setLoading(false);
@@ -89,7 +123,7 @@ export default function SearchPage() {
     }, 350);
 
     return () => clearTimeout(timeout);
-  }, [query]);
+  }, [query, page]);
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -133,6 +167,19 @@ export default function SearchPage() {
             ))}
           </div>
         </>
+      )}
+
+      {!error && query.trim().length >= 2 && (
+        <div className="mt-8">
+          <button
+            type="button"
+            className="px-4 py-2 rounded border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={loading || !hasMore}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            {loading && page > 1 ? "Loading..." : hasMore ? "Next page" : "No more results"}
+          </button>
+        </div>
       )}
 
       {!loading && !error && query.trim().length >= 2 && top.length === 0 && related.length === 0 && (

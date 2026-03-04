@@ -20,6 +20,7 @@ type TmdbKeyword = {
 
 type TmdbResponse<T> = {
   results?: T[];
+  total_pages?: number;
 };
 
 const TMDB = "https://api.themoviedb.org/3";
@@ -48,6 +49,10 @@ function dedupe(items: TmdbItem[]): TmdbItem[] {
   }
 
   return out;
+}
+
+function itemKey(item: TmdbItem): string {
+  return `${item.media_type}:${item.id}`;
 }
 
 function passesQuality(it: TmdbItem): boolean {
@@ -83,9 +88,54 @@ function score(it: TmdbItem, qLower: string): number {
   return s;
 }
 
+function isQueryRelevant(it: TmdbItem, qLower: string): boolean {
+  const title = (it.title ?? it.name ?? "").toLowerCase();
+  const overview = (it.overview ?? "").toLowerCase();
+  return title.includes(qLower) || overview.includes(qLower);
+}
+
+async function fetchSeedRecommendations(seed: TmdbItem, apiKey: string): Promise<TmdbItem[]> {
+  const [recommendationsPage1Response, recommendationsPage2Response, similarResponse] = (await Promise.all([
+    tmdbGet(`/${seed.media_type}/${seed.id}/recommendations?language=en-US&page=1`, apiKey),
+    tmdbGet(`/${seed.media_type}/${seed.id}/recommendations?language=en-US&page=2`, apiKey),
+    tmdbGet(`/${seed.media_type}/${seed.id}/similar?language=en-US&page=1`, apiKey),
+  ])) as [TmdbResponse<TmdbItem> | null, TmdbResponse<TmdbItem> | null, TmdbResponse<TmdbItem> | null];
+
+  const recommendationsPage1 = (recommendationsPage1Response?.results ?? []).map((item) => ({
+    ...item,
+    media_type: seed.media_type,
+  }));
+  const recommendationsPage2 = (recommendationsPage2Response?.results ?? []).map((item) => ({
+    ...item,
+    media_type: seed.media_type,
+  }));
+  const similar = (similarResponse?.results ?? []).map((item) => ({
+    ...item,
+    media_type: seed.media_type,
+  }));
+
+  return [...recommendationsPage1, ...recommendationsPage2, ...similar];
+}
+
+function titleHasQuery(it: TmdbItem, qLower: string): boolean {
+  const title = (it.title ?? it.name ?? "").toLowerCase();
+  return title.includes(qLower);
+}
+
+function pickSeedItems(items: TmdbItem[], qLower: string): TmdbItem[] {
+  const withQueryTitle = dedupe(items).filter((item) => titleHasQuery(item, qLower));
+  const movies = withQueryTitle.filter((item) => item.media_type === "movie");
+  const tv = withQueryTitle.filter((item) => item.media_type === "tv");
+
+  // Prioritize movies first so movie franchises are expanded reliably.
+  return [...movies.slice(0, 3), ...tv.slice(0, 1)].slice(0, 4);
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get("q") || "").trim();
+  const rawPage = Number(searchParams.get("page") || "1");
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
   if (q.length < 2) return NextResponse.json({ top: [], related: [] });
 
   const apiKey = process.env.TMDB_API_KEY;
@@ -98,11 +148,11 @@ export async function GET(req: Request) {
 
   const qLower = q.toLowerCase();
 
-  const multiPages = await Promise.all([
-    tmdbGet(`/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=1`, apiKey),
-    tmdbGet(`/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=2`, apiKey),
-    tmdbGet(`/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=3`, apiKey),
-  ]);
+  const multiPages = await Promise.all(
+    (page === 1 ? [1, 2, 3] : [page, page + 1]).map((p) =>
+      tmdbGet(`/search/multi?query=${encodeURIComponent(q)}&include_adult=false&language=en-US&page=${p}`, apiKey)
+    )
+  );
 
   const textMatches = multiPages
     .flatMap((page) => {
@@ -128,11 +178,11 @@ export async function GET(req: Request) {
 
     const [movieDiscover, tvDiscover] = await Promise.all([
       tmdbGet(
-        `/discover/movie?with_keywords=${withKeywords}&sort_by=popularity.desc&include_adult=false&language=en-US&page=1`,
+        `/discover/movie?with_keywords=${withKeywords}&sort_by=popularity.desc&include_adult=false&language=en-US&page=${page}`,
         apiKey
       ),
       tmdbGet(
-        `/discover/tv?with_keywords=${withKeywords}&sort_by=popularity.desc&include_adult=false&language=en-US&page=1`,
+        `/discover/tv?with_keywords=${withKeywords}&sort_by=popularity.desc&include_adult=false&language=en-US&page=${page}`,
         apiKey
       ),
     ]);
@@ -149,13 +199,39 @@ export async function GET(req: Request) {
     keywordMatches = [...movieResults, ...tvResults].filter(passesQuality);
   }
 
-  const combined = dedupe([...textMatches, ...keywordMatches]).sort(
-    (a, b) => score(b, qLower) - score(a, qLower)
+  // Pull recommendation-based franchise results from top seeds on page 1.
+  let recommendationMatches: TmdbItem[] = [];
+  const recommendationStrength = new Map<string, number>();
+  if (page === 1) {
+    const seeds = pickSeedItems(
+      [...textMatches, ...keywordMatches].sort((a, b) => score(b, qLower) - score(a, qLower)),
+      qLower
+    );
+    const recBatches = await Promise.all(seeds.map((seed) => fetchSeedRecommendations(seed, apiKey)));
+    const recRaw = recBatches.flat().filter(passesQuality);
+    for (const item of recRaw) {
+      const key = itemKey(item);
+      recommendationStrength.set(key, (recommendationStrength.get(key) ?? 0) + 1);
+    }
+    recommendationMatches = dedupe(recRaw);
+  }
+
+  const rank = (item: TmdbItem) => score(item, qLower) + (recommendationStrength.get(itemKey(item)) ?? 0) * 400;
+
+  const combined = dedupe([...textMatches, ...keywordMatches, ...recommendationMatches]).sort(
+    (a, b) => rank(b) - rank(a)
   );
 
-  const top = combined.slice(0, 20);
-  const topKeys = new Set(top.map((item) => `${item.media_type}:${item.id}`));
-  const related = combined.filter((item) => !topKeys.has(`${item.media_type}:${item.id}`)).slice(0, 40);
+  // Keep "Top matches" strictly relevant to the query.
+  const relevant = combined.filter((item) => isQueryRelevant(item, qLower));
+  const nonRelevant = combined.filter((item) => !isQueryRelevant(item, qLower));
 
-  return NextResponse.json({ top, related });
+  const top = relevant.slice(0, 20);
+  const recommendationKeys = new Set(recommendationMatches.map(itemKey));
+  const recommendationRelated = nonRelevant.filter((item) => recommendationKeys.has(itemKey(item)));
+  const remainingRelated = nonRelevant.filter((item) => !recommendationKeys.has(itemKey(item)));
+  const related = dedupe([...relevant.slice(20), ...recommendationRelated, ...remainingRelated]).slice(0, 40);
+  const hasMore = combined.length > 20 || textMatches.length > 0 || keywordMatches.length > 0;
+
+  return NextResponse.json({ top, related, page, hasMore });
 }
