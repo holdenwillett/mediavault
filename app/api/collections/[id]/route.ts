@@ -4,6 +4,17 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const VALID_STATUSES: CollectionStatus[] = ["wishlist", "in_progress", "completed"];
 
+function isSchemaMismatchError(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  if (error.code === "42703" || error.code === "42P01" || error.code === "PGRST200") return true;
+  const msg = (error.message ?? "").toLowerCase();
+  return (
+    msg.includes("does not exist") ||
+    msg.includes("could not find a relationship between") ||
+    msg.includes("schema cache")
+  );
+}
+
 function parseCompositeId(id: string): { mediaType: string; externalId: string } | null {
   const idx = id.indexOf(":");
   if (idx <= 0 || idx === id.length - 1) return null;
@@ -72,6 +83,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         .eq("id", body.listId)
         .eq("user_id", user.id)
         .maybeSingle();
+      if (listError && isSchemaMismatchError(listError)) {
+        return NextResponse.json({ error: "List folders are not enabled yet. Run the latest Supabase schema SQL." }, { status: 503 });
+      }
       if (listError) return NextResponse.json({ error: listError.message }, { status: 500 });
       if (!listRow) return NextResponse.json({ error: "List not found" }, { status: 400 });
     }
@@ -82,12 +96,27 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     return NextResponse.json({ error: "No updates provided" }, { status: 400 });
   }
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from("collection_entries")
     .update(updates)
     .eq("user_id", user.id)
     .eq("media_type", parsed.mediaType)
     .eq("external_id", parsed.externalId);
+
+  if (error && isSchemaMismatchError(error)) {
+    const fallbackUpdates: Record<string, unknown> = {};
+    if (typeof updates.status !== "undefined") fallbackUpdates.status = updates.status;
+    if (Object.keys(fallbackUpdates).length === 0) {
+      return NextResponse.json({ error: "Ratings and lists are not enabled yet. Run the latest Supabase schema SQL." }, { status: 503 });
+    }
+    const fallback = await supabase
+      .from("collection_entries")
+      .update(fallbackUpdates)
+      .eq("user_id", user.id)
+      .eq("media_type", parsed.mediaType)
+      .eq("external_id", parsed.externalId);
+    error = fallback.error;
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

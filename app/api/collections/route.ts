@@ -15,12 +15,44 @@ type CollectionInsertBody = {
 };
 
 const VALID_STATUSES: CollectionStatus[] = ["wishlist", "in_progress", "completed"];
+const FULL_SELECT =
+  "user_id, media_type, external_id, source, title, poster_url, rating, user_rating, status, list_id, created_at, updated_at";
+const LEGACY_SELECT = "user_id, media_type, external_id, source, title, poster_url, rating, status, created_at, updated_at";
+
+function isSchemaMismatchError(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  if (error.code === "42703" || error.code === "42P01" || error.code === "PGRST200") return true;
+  const msg = (error.message ?? "").toLowerCase();
+  return (
+    msg.includes("does not exist") ||
+    msg.includes("could not find a relationship between") ||
+    msg.includes("schema cache")
+  );
+}
 
 function toCompositeId(mediaType: string, externalId: string | number): string {
   return `${mediaType}:${String(externalId)}`;
 }
 
 function mapRow(row: Record<string, unknown>, listNameMap?: Map<string, string>) {
+  const rawStatus = String(row.status);
+  const status = VALID_STATUSES.includes(rawStatus as CollectionStatus)
+    ? (rawStatus as CollectionStatus)
+    : "wishlist";
+  const rawRating = row.rating;
+  const rating =
+    typeof rawRating === "number"
+      ? rawRating
+      : typeof rawRating === "string"
+      ? Number.parseFloat(rawRating)
+      : Number.NaN;
+  const rawUserRating = row.user_rating;
+  const userRating =
+    typeof rawUserRating === "number"
+      ? rawUserRating
+      : typeof rawUserRating === "string"
+      ? Number.parseFloat(rawUserRating)
+      : Number.NaN;
   const listId = row.list_id ? String(row.list_id) : null;
   return {
     id: toCompositeId(String(row.media_type), String(row.external_id)),
@@ -30,9 +62,9 @@ function mapRow(row: Record<string, unknown>, listNameMap?: Map<string, string>)
     source: String(row.source),
     title: String(row.title),
     posterUrl: row.poster_url ? String(row.poster_url) : null,
-    rating: typeof row.rating === "number" ? row.rating : undefined,
-    userRating: typeof row.user_rating === "number" ? row.user_rating : null,
-    status: String(row.status),
+    rating: Number.isFinite(rating) ? rating : undefined,
+    userRating: Number.isFinite(userRating) ? userRating : null,
+    status,
     listId,
     listName: listId ? (listNameMap?.get(listId) ?? null) : null,
     addedAt: String(row.created_at),
@@ -85,18 +117,29 @@ export async function GET(req: Request) {
   const mediaType = searchParams.get("mediaType");
   const externalId = searchParams.get("externalId");
 
-  let query = supabase
-    .from("collection_entries")
-    .select("user_id, media_type, external_id, source, title, poster_url, rating, user_rating, status, list_id, created_at, updated_at")
-    .eq("user_id", user.id)
-    .order("updated_at", { ascending: false });
+  let query = supabase.from("collection_entries").select(FULL_SELECT).eq("user_id", user.id).order("updated_at", { ascending: false });
 
   if (mediaType) query = query.eq("media_type", mediaType);
   if (externalId) query = query.eq("external_id", externalId);
 
-  const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const rows = (data ?? []) as Record<string, unknown>[];
+  const initial = await query;
+  let rows = ((initial.data ?? []) as unknown[]).map((row) => row as Record<string, unknown>);
+  let queryError = initial.error;
+  if (queryError) {
+    let fallbackQuery = supabase
+      .from("collection_entries")
+      .select(LEGACY_SELECT)
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false });
+    if (mediaType) fallbackQuery = fallbackQuery.eq("media_type", mediaType);
+    if (externalId) fallbackQuery = fallbackQuery.eq("external_id", externalId);
+    const fallback = await fallbackQuery;
+    if (!fallback.error) {
+      rows = ((fallback.data ?? []) as unknown[]).map((row) => row as Record<string, unknown>);
+      queryError = null;
+    }
+  }
+  if (queryError) return NextResponse.json({ error: queryError.message }, { status: 500 });
   const listIds = Array.from(
     new Set(rows.map((row) => row.list_id).filter((id): id is string | number => Boolean(id)).map((id) => String(id)))
   );
@@ -130,6 +173,9 @@ export async function POST(req: Request) {
       .eq("id", body.listId)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (listError && isSchemaMismatchError(listError)) {
+      return NextResponse.json({ error: "List folders are not enabled yet. Run the latest Supabase schema SQL." }, { status: 503 });
+    }
     if (listError) return NextResponse.json({ error: listError.message }, { status: 500 });
     if (!listRow) return NextResponse.json({ error: "List not found" }, { status: 400 });
   }
@@ -154,14 +200,39 @@ export async function POST(req: Request) {
     list_id: body.listId ?? null,
   };
 
-  const { data, error } = await supabase
+  const initialUpsert = await supabase
     .from("collection_entries")
     .upsert(payload, { onConflict: "user_id,media_type,external_id" })
-    .select("user_id, media_type, external_id, source, title, poster_url, rating, user_rating, status, list_id, created_at, updated_at")
+    .select(FULL_SELECT)
     .single();
+  let upsertRow = (initialUpsert.data ?? null) as Record<string, unknown> | null;
+  let upsertError = initialUpsert.error;
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const row = data as Record<string, unknown>;
+  if (upsertError) {
+    const legacyPayload = {
+      user_id: user.id,
+      media_type: body.mediaType,
+      external_id: String(body.externalId),
+      source: body.source,
+      title: body.title,
+      poster_url: body.posterUrl ?? null,
+      rating: body.rating ?? null,
+      status: body.status,
+    };
+    const fallback = await supabase
+      .from("collection_entries")
+      .upsert(legacyPayload, { onConflict: "user_id,media_type,external_id" })
+      .select(LEGACY_SELECT)
+      .single();
+    if (!fallback.error) {
+      upsertRow = (fallback.data ?? null) as Record<string, unknown> | null;
+      upsertError = null;
+    }
+  }
+
+  if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 500 });
+  if (!upsertRow) return NextResponse.json({ error: "Could not save this item." }, { status: 500 });
+  const row = upsertRow;
   const listId = row.list_id ? String(row.list_id) : null;
   const listNameMap =
     listId === null ? new Map<string, string>() : await fetchListNameMap(supabase, user.id, [listId]).catch(() => new Map<string, string>());

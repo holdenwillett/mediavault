@@ -5,6 +5,17 @@ type ListInsertBody = {
   name?: string;
 };
 
+function isSchemaMismatchError(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  if (error.code === "42703" || error.code === "42P01" || error.code === "PGRST200") return true;
+  const msg = (error.message ?? "").toLowerCase();
+  return (
+    msg.includes("does not exist") ||
+    msg.includes("could not find a relationship between") ||
+    msg.includes("schema cache")
+  );
+}
+
 function mapListRow(row: Record<string, unknown>) {
   return {
     id: String(row.id),
@@ -37,6 +48,9 @@ export async function GET() {
     .eq("user_id", user.id)
     .order("name", { ascending: true });
 
+  if (error && isSchemaMismatchError(error)) {
+    return NextResponse.json({ lists: [] });
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ lists: (data ?? []).map(mapListRow) });
 }
@@ -65,6 +79,9 @@ export async function POST(req: Request) {
     .single();
 
   if (error) {
+    if (isSchemaMismatchError(error)) {
+      return NextResponse.json({ error: "List folders are not enabled yet. Run the latest Supabase schema SQL." }, { status: 503 });
+    }
     if (error.code === "23505") return NextResponse.json({ error: "List already exists" }, { status: 409 });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

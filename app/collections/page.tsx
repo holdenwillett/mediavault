@@ -13,6 +13,10 @@ const STATUS_LABEL: Record<CollectionStatus, string> = {
 
 const STATUS_ORDER: CollectionStatus[] = ["wishlist", "in_progress", "completed"];
 
+function isCollectionStatus(value: string): value is CollectionStatus {
+  return value === "wishlist" || value === "in_progress" || value === "completed";
+}
+
 export default function CollectionsPage() {
   const router = useRouter();
   const [items, setItems] = useState<CollectionEntry[]>([]);
@@ -90,7 +94,10 @@ export default function CollectionsPage() {
       completed: [],
     };
     const sorted = [...filteredItems].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    for (const item of sorted) byStatus[item.status].push(item);
+    for (const item of sorted) {
+      const status = isCollectionStatus(String(item.status)) ? item.status : "wishlist";
+      byStatus[status].push(item);
+    }
     return byStatus;
   }, [filteredItems]);
 
