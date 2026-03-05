@@ -27,6 +27,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
   const [newListName, setNewListName] = useState("");
   const [userRating, setUserRating] = useState<number | null>(null);
   const [hoverRating, setHoverRating] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -125,6 +126,59 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
     return starIndex + (isLeftHalf ? 0.5 : 1);
   };
 
+  const saveCollection = async (overrides?: {
+    userRating?: number | null;
+    status?: CollectionStatus;
+    listId?: string;
+  }) => {
+    setError(null);
+    setSaving(true);
+
+    const effectiveUserRating = typeof overrides?.userRating !== "undefined" ? overrides.userRating : userRating;
+    const effectiveStatus = overrides?.status ?? status;
+    const effectiveListId = typeof overrides?.listId !== "undefined" ? overrides.listId : listId;
+
+    const saveRes = await fetch("/api/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mediaType,
+        externalId,
+        source,
+        title,
+        posterUrl,
+        rating,
+        userRating: effectiveUserRating,
+        status: effectiveStatus,
+        listId: effectiveListId || null,
+      }),
+    });
+    if (saveRes.status === 401) {
+      setSignedIn(false);
+      setExisting(null);
+      setStatus("wishlist");
+      setListId("");
+      setUserRating(null);
+      setSaving(false);
+      router.push(`/account?next=/${mediaType}/${encodeURIComponent(String(externalId))}&reason=session-expired`);
+      return;
+    }
+    if (!saveRes.ok) {
+      const data = (await saveRes.json().catch(() => ({}))) as { error?: string };
+      setError(data.error ?? "Could not save this item.");
+      setSaving(false);
+      return;
+    }
+
+    const data = (await saveRes.json()) as { item?: CollectionEntry };
+    const item = data.item ?? null;
+    setExisting(item);
+    setStatus(item?.status ?? effectiveStatus);
+    setListId(item?.listId ?? (effectiveListId || ""));
+    setUserRating(typeof item?.userRating === "number" ? Number(item.userRating.toFixed(1)) : effectiveUserRating ?? null);
+    setSaving(false);
+  };
+
   return (
     <div className="mt-5 rounded-lg border border-zinc-800 bg-zinc-900 p-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -154,9 +208,15 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
                   <button
                     key={i}
                     type="button"
-                    className="relative h-8 w-8"
+                    className="relative h-8 w-8 disabled:opacity-60"
+                    disabled={saving}
                     onMouseMove={(e) => setHoverRating(getHoverValue(i, e.clientX, e.currentTarget.getBoundingClientRect()))}
-                    onClick={(e) => setUserRating(getHoverValue(i, e.clientX, e.currentTarget.getBoundingClientRect()))}
+                    onClick={(e) => {
+                      const selectedRating = getHoverValue(i, e.clientX, e.currentTarget.getBoundingClientRect());
+                      setUserRating(selectedRating);
+                      setStatus("completed");
+                      void saveCollection({ userRating: selectedRating, status: "completed" });
+                    }}
                     aria-label={`Set rating to ${i + 1}`}
                   >
                     <svg viewBox="0 0 24 24" className="h-8 w-8">
@@ -181,6 +241,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
               <button
                 type="button"
                 className="text-xs text-zinc-400 underline hover:text-zinc-200"
+                disabled={saving}
                 onClick={() => {
                   setUserRating(null);
                   setHoverRating(null);
@@ -257,56 +318,20 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
       <div className="mt-3 flex flex-wrap gap-2 items-center">
         <button
           type="button"
-          className="px-3 py-1 rounded bg-white text-black text-sm hover:bg-zinc-200"
+          className="px-3 py-1 rounded bg-white text-black text-sm hover:bg-zinc-200 disabled:opacity-60"
+          disabled={saving}
           onClick={async () => {
-            setError(null);
-            const parsedUserRating = userRating;
-
-            const saveRes = await fetch("/api/collections", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                mediaType,
-                externalId,
-                source,
-                title,
-                posterUrl,
-                rating,
-                userRating: parsedUserRating,
-                status,
-                listId: listId || null,
-              }),
-            });
-            if (saveRes.status === 401) {
-              setSignedIn(false);
-              setExisting(null);
-              setStatus("wishlist");
-              setListId("");
-              setUserRating(null);
-              router.push(`/account?next=/${mediaType}/${encodeURIComponent(String(externalId))}&reason=session-expired`);
-              return;
-            }
-            if (!saveRes.ok) {
-              const data = (await saveRes.json().catch(() => ({}))) as { error?: string };
-              setError(data.error ?? "Could not save this item.");
-              return;
-            }
-
-            const data = (await saveRes.json()) as { item?: CollectionEntry };
-            const item = data.item ?? null;
-            setExisting(item);
-            setStatus(item?.status ?? "wishlist");
-            setListId(item?.listId ?? "");
-            setUserRating(typeof item?.userRating === "number" ? Number(item.userRating.toFixed(1)) : null);
+            await saveCollection();
           }}
         >
-          {saved ? "Update" : "Add to Collection"}
+          {saving ? "Saving..." : saved ? "Update" : "Add to Collection"}
         </button>
 
         {saved ? (
           <button
             type="button"
-            className="px-3 py-1 rounded border border-zinc-700 text-sm hover:bg-zinc-800"
+            className="px-3 py-1 rounded border border-zinc-700 text-sm hover:bg-zinc-800 disabled:opacity-60"
+            disabled={saving}
             onClick={async () => {
               if (!existing) return;
               setError(null);

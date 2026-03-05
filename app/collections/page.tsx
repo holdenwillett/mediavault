@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { CollectionEntry, CollectionList, CollectionStatus } from "@/lib/account/types";
+import type { MediaType } from "@/lib/media/types";
 
 const STATUS_LABEL: Record<CollectionStatus, string> = {
   wishlist: "Wishlist",
@@ -12,9 +13,18 @@ const STATUS_LABEL: Record<CollectionStatus, string> = {
 };
 
 const STATUS_ORDER: CollectionStatus[] = ["wishlist", "in_progress", "completed"];
+const MEDIA_FILTERS: Array<"all" | MediaType> = ["all", "movie", "tv", "game"];
 
 function isCollectionStatus(value: string): value is CollectionStatus {
   return value === "wishlist" || value === "in_progress" || value === "completed";
+}
+
+function formatRatingValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function mediaTypeLabel(type: MediaType): string {
+  return type === "tv" ? "TV" : type.charAt(0).toUpperCase() + type.slice(1);
 }
 
 export default function CollectionsPage() {
@@ -22,6 +32,7 @@ export default function CollectionsPage() {
   const [items, setItems] = useState<CollectionEntry[]>([]);
   const [lists, setLists] = useState<CollectionList[]>([]);
   const [selectedList, setSelectedList] = useState<string>("all");
+  const [selectedMediaType, setSelectedMediaType] = useState<"all" | MediaType>("all");
   const [newListName, setNewListName] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -82,10 +93,16 @@ export default function CollectionsPage() {
   }, [reload, router]);
 
   const filteredItems = useMemo(() => {
-    if (selectedList === "all") return items;
-    if (selectedList === "unlisted") return items.filter((item) => !item.listId);
-    return items.filter((item) => item.listId === selectedList);
-  }, [items, selectedList]);
+    const listFiltered =
+      selectedList === "all"
+        ? items
+        : selectedList === "unlisted"
+        ? items.filter((item) => !item.listId)
+        : items.filter((item) => item.listId === selectedList);
+
+    if (selectedMediaType === "all") return listFiltered;
+    return listFiltered.filter((item) => item.mediaType === selectedMediaType);
+  }, [items, selectedList, selectedMediaType]);
 
   const grouped = useMemo(() => {
     const byStatus: Record<CollectionStatus, CollectionEntry[]> = {
@@ -177,6 +194,23 @@ export default function CollectionsPage() {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
+              {MEDIA_FILTERS.map((mediaFilter) => (
+                <button
+                  key={mediaFilter}
+                  type="button"
+                  className={`px-3 py-1.5 rounded text-sm border ${
+                    selectedMediaType === mediaFilter
+                      ? "bg-white text-black border-white"
+                      : "border-zinc-700 hover:bg-zinc-800"
+                  }`}
+                  onClick={() => setSelectedMediaType(mediaFilter)}
+                >
+                  {mediaFilter === "all" ? "All Types" : mediaTypeLabel(mediaFilter)}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
               <input
                 type="text"
                 value={newListName}
@@ -225,7 +259,7 @@ export default function CollectionsPage() {
                   {grouped[status].map((item) => (
                     <Link key={item.id} href={`/${item.mediaType}/${item.externalId}`} className="group block">
                       <article className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-                        <div className="aspect-[2/3] bg-zinc-950">
+                        <div className="relative aspect-[2/3] bg-zinc-950">
                           {item.posterUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
@@ -238,15 +272,18 @@ export default function CollectionsPage() {
                               No Poster
                             </div>
                           )}
+                          <span className="absolute right-2 top-2 text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 bg-black/70 text-zinc-200 uppercase tracking-wide">
+                            {mediaTypeLabel(item.mediaType)}
+                          </span>
                         </div>
                         <div className="p-2.5">
                           <p className="text-xs text-zinc-100 truncate">{item.title}</p>
                           <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
                             <p className="text-zinc-300">
-                              You: {typeof item.userRating === "number" ? `${item.userRating.toFixed(1)}/10` : "-"}
+                              You: {typeof item.userRating === "number" ? `${formatRatingValue(item.userRating)}/10` : "-"}
                             </p>
                             <p className="text-zinc-500">
-                              {typeof item.rating === "number" ? `${item.rating.toFixed(1)}/10` : "-"}
+                              {typeof item.rating === "number" ? `${formatRatingValue(item.rating)}/10` : "-"}
                             </p>
                           </div>
                         </div>
