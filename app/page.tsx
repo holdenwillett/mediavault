@@ -16,7 +16,7 @@ export default function Home() {
             textShadow: "0 4px 24px rgba(0,0,0,0.6)",
           }}
         >
-          MediaVault
+          Media-Vault
         </h1>
         <p className="text-lg sm:text-xl text-gray-200">Track your movies, shows, and games.</p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-4">
