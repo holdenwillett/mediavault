@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import type { CollectionEntry, CollectionList, CollectionStatus } from "@/lib/account/types";
 import type { MediaSource, MediaType } from "@/lib/media/types";
 
+const STAR_COUNT = 10;
+
 type Props = {
   mediaType: MediaType;
   externalId: string | number;
@@ -23,7 +25,8 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
   const [status, setStatus] = useState<CollectionStatus>("wishlist");
   const [listId, setListId] = useState("");
   const [newListName, setNewListName] = useState("");
-  const [userRating, setUserRating] = useState("");
+  const [userRating, setUserRating] = useState<number | null>(null);
+  const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +49,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
           setLists([]);
           setStatus("wishlist");
           setListId("");
-          setUserRating("");
+          setUserRating(null);
           setLoading(false);
           router.push(`/account?next=/${mediaType}/${encodeURIComponent(String(externalId))}&reason=session-expired`);
           return;
@@ -59,7 +62,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
           setLists([]);
           setStatus("wishlist");
           setListId("");
-          setUserRating("");
+          setUserRating(null);
           setError(data.error ?? listData.error ?? "Could not load collection state.");
           setLoading(false);
           return;
@@ -73,7 +76,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
         setLists(listData.lists ?? []);
         setStatus(item?.status ?? "wishlist");
         setListId(item?.listId ?? "");
-        setUserRating(typeof item?.userRating === "number" ? item.userRating.toFixed(1) : "");
+        setUserRating(typeof item?.userRating === "number" ? Number(item.userRating.toFixed(1)) : null);
         setLoading(false);
       } catch {
         if (!active) return;
@@ -82,7 +85,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
         setLists([]);
         setStatus("wishlist");
         setListId("");
-        setUserRating("");
+        setUserRating(null);
         setError("Network error while loading collection state.");
         setLoading(false);
       }
@@ -115,6 +118,12 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
   }
 
   const saved = Boolean(existing);
+  const displayRating = hoverRating ?? userRating ?? 0;
+
+  const getHoverValue = (starIndex: number, clientX: number, rect: DOMRect) => {
+    const isLeftHalf = clientX - rect.left < rect.width / 2;
+    return starIndex + (isLeftHalf ? 0.5 : 1);
+  };
 
   return (
     <div className="mt-5 rounded-lg border border-zinc-800 bg-zinc-900 p-3">
@@ -134,17 +143,53 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
 
         <label className="text-sm text-zinc-300">
           Your Rating (0-10)
-          <input
-            type="number"
-            min={0}
-            max={10}
-            step={0.1}
-            inputMode="decimal"
-            className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-2 text-sm"
-            placeholder="8.5"
-            value={userRating}
-            onChange={(e) => setUserRating(e.target.value)}
-          />
+          <div
+            className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/70 p-2"
+            onMouseLeave={() => setHoverRating(null)}
+          >
+            <div className="flex flex-wrap gap-1.5">
+              {Array.from({ length: STAR_COUNT }, (_, i) => {
+                const fill = Math.max(0, Math.min(1, displayRating - i));
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className="relative h-8 w-8"
+                    onMouseMove={(e) => setHoverRating(getHoverValue(i, e.clientX, e.currentTarget.getBoundingClientRect()))}
+                    onClick={(e) => setUserRating(getHoverValue(i, e.clientX, e.currentTarget.getBoundingClientRect()))}
+                    aria-label={`Set rating to ${i + 1}`}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-8 w-8">
+                      <path
+                        d="M12 2.2l2.8 5.7 6.3.9-4.6 4.4 1.1 6.2L12 16.5l-5.6 2.9 1.1-6.2-4.6-4.4 6.3-.9L12 2.2z"
+                        fill="none"
+                        stroke="#a3a3a3"
+                        strokeWidth="1.6"
+                      />
+                    </svg>
+                    <span className="pointer-events-none absolute inset-0 overflow-hidden" style={{ width: `${fill * 100}%` }}>
+                      <svg viewBox="0 0 24 24" className="h-8 w-8">
+                        <path d="M12 2.2l2.8 5.7 6.3.9-4.6 4.4 1.1 6.2L12 16.5l-5.6 2.9 1.1-6.2-4.6-4.4 6.3-.9L12 2.2z" fill="#facc15" />
+                      </svg>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex items-center gap-3">
+              <p className="text-xs text-zinc-300">{userRating === null ? "No rating" : `${userRating.toFixed(1)} / 10`}</p>
+              <button
+                type="button"
+                className="text-xs text-zinc-400 underline hover:text-zinc-200"
+                onClick={() => {
+                  setUserRating(null);
+                  setHoverRating(null);
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
         </label>
 
         <label className="text-sm text-zinc-300">
@@ -215,11 +260,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
           className="px-3 py-1 rounded bg-white text-black text-sm hover:bg-zinc-200"
           onClick={async () => {
             setError(null);
-            const parsedUserRating = userRating.trim() === "" ? null : Number(userRating);
-            if (parsedUserRating !== null && (Number.isNaN(parsedUserRating) || parsedUserRating < 0 || parsedUserRating > 10)) {
-              setError("Your rating must be between 0 and 10.");
-              return;
-            }
+            const parsedUserRating = userRating;
 
             const saveRes = await fetch("/api/collections", {
               method: "POST",
@@ -241,7 +282,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
               setExisting(null);
               setStatus("wishlist");
               setListId("");
-              setUserRating("");
+              setUserRating(null);
               router.push(`/account?next=/${mediaType}/${encodeURIComponent(String(externalId))}&reason=session-expired`);
               return;
             }
@@ -256,7 +297,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
             setExisting(item);
             setStatus(item?.status ?? "wishlist");
             setListId(item?.listId ?? "");
-            setUserRating(typeof item?.userRating === "number" ? item.userRating.toFixed(1) : "");
+            setUserRating(typeof item?.userRating === "number" ? Number(item.userRating.toFixed(1)) : null);
           }}
         >
           {saved ? "Update" : "Add to Collection"}
@@ -275,7 +316,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
                 setExisting(null);
                 setStatus("wishlist");
                 setListId("");
-                setUserRating("");
+                setUserRating(null);
                 router.push(`/account?next=/${mediaType}/${encodeURIComponent(String(externalId))}&reason=session-expired`);
                 return;
               }
@@ -287,7 +328,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
               setExisting(null);
               setStatus("wishlist");
               setListId("");
-              setUserRating("");
+              setUserRating(null);
             }}
           >
             Remove
