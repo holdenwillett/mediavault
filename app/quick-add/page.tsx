@@ -123,6 +123,47 @@ export default function QuickAddPage() {
     setSaving(false);
   };
 
+  const saveWishlist = async () => {
+    if (!current) return;
+    setSaving(true);
+    setError(null);
+
+    const saveRes = await fetch("/api/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mediaType: current.mediaType,
+        externalId: current.externalId,
+        source: current.source,
+        title: current.title,
+        posterUrl: current.posterUrl,
+        rating: current.rating,
+        userRating: null,
+        status: "wishlist",
+        listId: null,
+      }),
+    });
+
+    if (saveRes.status === 401) {
+      setSaving(false);
+      router.push("/account?next=/quick-add&reason=session-expired");
+      return;
+    }
+
+    if (!saveRes.ok) {
+      const data = (await saveRes.json().catch(() => ({}))) as { error?: string };
+      setSaving(false);
+      setError(data.error ?? "Could not add to wishlist.");
+      return;
+    }
+
+    setItems((prev) => prev.filter((_, i) => i !== index));
+    setShowRating(false);
+    setHoverRating(null);
+    if (index >= items.length - 1) setIndex((v) => Math.max(0, v - 1));
+    setSaving(false);
+  };
+
   const displayRating = hoverRating ?? 0;
   const promptLabel = useMemo(() => {
     if (!selectedType) return "Choose a media type to start quick-adding.";
@@ -231,14 +272,24 @@ export default function QuickAddPage() {
 
             <div className="w-full max-w-[280px] md:w-[280px] md:pt-2">
               {!showRating ? (
-                <button
-                  type="button"
-                  className="w-full px-3 py-2 rounded bg-white text-black text-sm hover:bg-zinc-200 disabled:opacity-60"
-                  disabled={saving}
-                  onClick={() => setShowRating(true)}
-                >
-                  Check
-                </button>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 rounded bg-white text-black text-sm hover:bg-zinc-200 disabled:opacity-60"
+                    disabled={saving}
+                    onClick={() => setShowRating(true)}
+                  >
+                    Check
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 rounded border border-zinc-700 text-sm hover:bg-zinc-800 disabled:opacity-60"
+                    disabled={saving}
+                    onClick={() => void saveWishlist()}
+                  >
+                    Add to Wishlist
+                  </button>
+                </div>
               ) : (
                 <div className="w-full overflow-hidden rounded-lg border border-zinc-700 bg-zinc-800/70 p-2" onMouseLeave={() => setHoverRating(null)}>
                   <p className="text-xs text-zinc-300 mb-2">Rate it (0.5 steps) and it will be added to Completed.</p>

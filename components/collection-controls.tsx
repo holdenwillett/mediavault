@@ -24,7 +24,6 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
   const [lists, setLists] = useState<CollectionList[]>([]);
   const [status, setStatus] = useState<CollectionStatus>("wishlist");
   const [listId, setListId] = useState("");
-  const [newListName, setNewListName] = useState("");
   const [userRating, setUserRating] = useState<number | null>(null);
   const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -269,50 +268,6 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
           </select>
         </label>
 
-        <div className="text-sm text-zinc-300">
-          New List
-          <div className="mt-1 flex gap-2">
-            <input
-              type="text"
-              className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-2 text-sm"
-              placeholder="Favorites"
-              value={newListName}
-              onChange={(e) => setNewListName(e.target.value)}
-            />
-            <button
-              type="button"
-              className="px-3 py-2 rounded border border-zinc-700 text-sm hover:bg-zinc-800"
-              onClick={async () => {
-                const name = newListName.trim();
-                if (!name) return;
-                setError(null);
-                const res = await fetch("/api/collections/lists", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ name }),
-                });
-                if (res.status === 401) {
-                  setSignedIn(false);
-                  router.push(`/account?next=/${mediaType}/${encodeURIComponent(String(externalId))}&reason=session-expired`);
-                  return;
-                }
-                if (!res.ok) {
-                  const data = (await res.json().catch(() => ({}))) as { error?: string };
-                  setError(data.error ?? "Could not create list.");
-                  return;
-                }
-                const data = (await res.json()) as { list?: CollectionList };
-                const createdList = data.list;
-                if (!createdList) return;
-                setLists((prev) => [...prev, createdList].sort((a, b) => a.name.localeCompare(b.name)));
-                setListId(createdList.id);
-                setNewListName("");
-              }}
-            >
-              Create
-            </button>
-          </div>
-        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2 items-center">

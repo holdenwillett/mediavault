@@ -14,6 +14,7 @@ const STATUS_LABEL: Record<CollectionStatus, string> = {
 
 const STATUS_ORDER: CollectionStatus[] = ["wishlist", "in_progress", "completed"];
 const MEDIA_FILTERS: Array<"all" | MediaType> = ["all", "movie", "tv", "game"];
+type RatingSort = "recent" | "highest" | "lowest";
 
 function isCollectionStatus(value: string): value is CollectionStatus {
   return value === "wishlist" || value === "in_progress" || value === "completed";
@@ -33,12 +34,11 @@ export default function CollectionsPage() {
   const [lists, setLists] = useState<CollectionList[]>([]);
   const [selectedList, setSelectedList] = useState<string>("all");
   const [selectedMediaType, setSelectedMediaType] = useState<"all" | MediaType>("all");
-  const [newListName, setNewListName] = useState("");
+  const [sortMode, setSortMode] = useState<RatingSort>("recent");
   const [signedIn, setSignedIn] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -90,7 +90,7 @@ export default function CollectionsPage() {
     return () => {
       active = false;
     };
-  }, [reload, router]);
+  }, [router]);
 
   const filteredItems = useMemo(() => {
     const listFiltered =
@@ -110,13 +110,23 @@ export default function CollectionsPage() {
       in_progress: [],
       completed: [],
     };
-    const sorted = [...filteredItems].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const ratingValue = (item: CollectionEntry) => (typeof item.userRating === "number" ? item.userRating : item.rating ?? -1);
+    const sorted = [...filteredItems].sort((a, b) => {
+      if (sortMode === "highest") {
+        const diff = ratingValue(b) - ratingValue(a);
+        if (diff !== 0) return diff;
+      } else if (sortMode === "lowest") {
+        const diff = ratingValue(a) - ratingValue(b);
+        if (diff !== 0) return diff;
+      }
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
     for (const item of sorted) {
       const status = isCollectionStatus(String(item.status)) ? item.status : "wishlist";
       byStatus[status].push(item);
     }
     return byStatus;
-  }, [filteredItems]);
+  }, [filteredItems, sortMode]);
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
@@ -214,40 +224,32 @@ export default function CollectionsPage() {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              <input
-                type="text"
-                value={newListName}
-                onChange={(e) => setNewListName(e.target.value)}
-                className="bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-sm"
-                placeholder="Create a new list"
-              />
               <button
                 type="button"
-                className="px-3 py-1.5 rounded border border-zinc-700 text-sm hover:bg-zinc-800"
-                onClick={async () => {
-                  const name = newListName.trim();
-                  if (!name) return;
-                  const res = await fetch("/api/collections/lists", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name }),
-                  });
-                  if (res.status === 401) {
-                    setSignedIn(false);
-                    setSessionExpired(true);
-                    router.push("/account?next=/collections&reason=session-expired");
-                    return;
-                  }
-                  if (!res.ok) {
-                    const data = (await res.json().catch(() => ({}))) as { error?: string };
-                    setError(data.error ?? "Could not create list.");
-                    return;
-                  }
-                  setNewListName("");
-                  setReload((v) => v + 1);
-                }}
+                className={`px-3 py-1.5 rounded text-sm border ${
+                  sortMode === "recent" ? "bg-white text-black border-white" : "border-zinc-700 hover:bg-zinc-800"
+                }`}
+                onClick={() => setSortMode("recent")}
               >
-                Create List
+                Recent
+              </button>
+              <button
+                type="button"
+                className={`px-3 py-1.5 rounded text-sm border ${
+                  sortMode === "highest" ? "bg-white text-black border-white" : "border-zinc-700 hover:bg-zinc-800"
+                }`}
+                onClick={() => setSortMode("highest")}
+              >
+                Highest Rated
+              </button>
+              <button
+                type="button"
+                className={`px-3 py-1.5 rounded text-sm border ${
+                  sortMode === "lowest" ? "bg-white text-black border-white" : "border-zinc-700 hover:bg-zinc-800"
+                }`}
+                onClick={() => setSortMode("lowest")}
+              >
+                Lowest Rated
               </button>
             </div>
           </section>
