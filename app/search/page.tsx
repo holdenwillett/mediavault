@@ -97,11 +97,47 @@ export default function SearchPage() {
   const [filter, setFilter] = useState<SearchFilter>("all");
   const [top, setTop] = useState<MediaSearchItem[]>([]);
   const [related, setRelated] = useState<MediaSearchItem[]>([]);
+  const [recommendations, setRecommendations] = useState<MediaSearchItem[]>([]);
+  const [recommendationSeeds, setRecommendationSeeds] = useState<string[]>([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
+  const [recommendationsLoaded, setRecommendationsLoaded] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    if (query.trim().length >= 2 || recommendationsLoaded) return;
+
+    const controller = new AbortController();
+    (async () => {
+      try {
+        setRecommendationsLoading(true);
+        const res = await fetch("/api/recommendations", { cache: "no-store", signal: controller.signal });
+        if (!res.ok) {
+          setRecommendations([]);
+          setRecommendationSeeds([]);
+          setRecommendationsLoaded(true);
+          return;
+        }
+        const data = (await res.json()) as { items?: MediaSearchItem[]; basedOn?: string[] };
+        setRecommendations(data.items ?? []);
+        setRecommendationSeeds(data.basedOn ?? []);
+        setRecommendationsLoaded(true);
+      } catch {
+        if (!controller.signal.aborted) {
+          setRecommendations([]);
+          setRecommendationSeeds([]);
+          setRecommendationsLoaded(true);
+        }
+      } finally {
+        if (!controller.signal.aborted) setRecommendationsLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [query, recommendationsLoaded]);
 
   useEffect(() => {
     setPage(1);
@@ -264,6 +300,28 @@ export default function SearchPage() {
         {loading && "Searching..."}
         {error && <span className="text-red-400">{error}</span>}
       </div>
+
+      {query.trim().length < 2 && (
+        <section className="mb-8">
+          <h2 className="text-xl font-semibold mb-2">Recommended For You</h2>
+          {recommendationSeeds.length > 0 && (
+            <p className="text-sm text-zinc-400 mb-3">Based on: {recommendationSeeds.join(", ")}</p>
+          )}
+          {recommendationsLoading && <p className="text-sm text-zinc-500">Loading recommendations...</p>}
+          {!recommendationsLoading && recommendations.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
+              {recommendations.map((item) => (
+                <MediaCard key={item.id} item={item} />
+              ))}
+            </div>
+          )}
+          {!recommendationsLoading && recommendationsLoaded && recommendations.length === 0 && (
+            <p className="text-sm text-zinc-500">
+              Add a few titles to your collection to unlock personalized recommendations.
+            </p>
+          )}
+        </section>
+      )}
 
       {top.length > 0 && (
         <>
