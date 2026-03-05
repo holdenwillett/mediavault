@@ -255,6 +255,9 @@ export default function SearchPage() {
           <Link href="/" className="text-gray-300 hover:text-white">
             Home
           </Link>
+          <Link href="/quick-add" className="text-gray-300 hover:text-white">
+            Quick-Add
+          </Link>
           <Link href="/account" className="text-gray-300 hover:text-white">
             Account
           </Link>

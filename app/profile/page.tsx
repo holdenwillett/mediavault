@@ -21,6 +21,9 @@ export default async function ProfilePage() {
             <Link href="/" className="text-gray-300 hover:text-white">
               Home
             </Link>
+            <Link href="/quick-add" className="text-gray-300 hover:text-white">
+              Quick-Add
+            </Link>
             <Link href="/search" className="text-gray-300 hover:text-white">
               Search
             </Link>

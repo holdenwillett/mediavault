@@ -23,6 +23,9 @@ export default function Home() {
           <Link href="/search" className="px-4 py-2 rounded bg-white text-black hover:bg-zinc-200">
             Search
           </Link>
+          <Link href="/quick-add" className="px-4 py-2 rounded border border-zinc-500 bg-black/40 hover:bg-zinc-900">
+            Quick-Add
+          </Link>
           <Link href="/account" className="px-4 py-2 rounded border border-zinc-500 bg-black/40 hover:bg-zinc-900">
             Account
           </Link>
