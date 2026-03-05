@@ -106,6 +106,9 @@ export default function CollectionsPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">My Collection</h1>
         <div className="flex items-center gap-4">
+          <Link href="/" className="text-gray-300 hover:text-white">
+            Home
+          </Link>
           <Link href="/search" className="text-gray-300 hover:text-white">
             Search
           </Link>

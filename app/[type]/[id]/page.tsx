@@ -187,9 +187,14 @@ export default async function MediaDetailsPage({
   return (
     <main className="min-h-screen bg-black text-white p-6">
       <div className="mx-auto max-w-5xl">
-        <Link href="/search" className="text-gray-300 hover:text-white">
-          {"<- Back to Search"}
-        </Link>
+        <div className="flex items-center gap-4 text-sm">
+          <Link href="/" className="text-gray-300 hover:text-white">
+            Home
+          </Link>
+          <Link href="/search" className="text-gray-300 hover:text-white">
+            {"<- Back to Search"}
+          </Link>
+        </div>
 
         <div className="mt-6 flex flex-col md:flex-row gap-8">
           <div className="w-full md:w-72">
