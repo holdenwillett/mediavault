@@ -39,8 +39,9 @@ function keyOf(item: MediaSearchItem): string {
 
 async function fetchTmdbRecommendations(seed: CollectionRow, apiKey: string): Promise<MediaSearchItem[]> {
   if ((seed.media_type !== "movie" && seed.media_type !== "tv") || seed.source !== "tmdb") return [];
+  const mediaType = seed.media_type === "movie" ? "movie" : "tv";
   const res = await fetch(
-    `https://api.themoviedb.org/3/${seed.media_type}/${encodeURIComponent(
+    `https://api.themoviedb.org/3/${mediaType}/${encodeURIComponent(
       seed.external_id
     )}/recommendations?language=en-US&page=1&api_key=${apiKey}`,
     { cache: "no-store" }
@@ -48,7 +49,7 @@ async function fetchTmdbRecommendations(seed: CollectionRow, apiKey: string): Pr
   if (!res.ok) return [];
   const data = (await res.json()) as TmdbRecommendationsResponse;
   return (data.results ?? [])
-    .map((item) => normalizeTmdbSearchItem({ ...item, media_type: seed.media_type }))
+    .map((item) => normalizeTmdbSearchItem({ ...item, media_type: mediaType }))
     .filter((item) => !!item.posterUrl);
 }
 
