@@ -207,6 +207,7 @@ export async function POST(req: Request) {
     .single();
   let upsertRow = (initialUpsert.data ?? null) as Record<string, unknown> | null;
   let upsertError = initialUpsert.error;
+  let usedLegacyFallback = false;
 
   if (upsertError) {
     const legacyPayload = {
@@ -227,10 +228,14 @@ export async function POST(req: Request) {
     if (!fallback.error) {
       upsertRow = (fallback.data ?? null) as Record<string, unknown> | null;
       upsertError = null;
+      usedLegacyFallback = true;
     }
   }
 
   if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 500 });
+  if (usedLegacyFallback && userRating !== null) {
+    return NextResponse.json({ error: "User ratings are not enabled yet. Run the latest Supabase schema SQL." }, { status: 503 });
+  }
   if (!upsertRow) return NextResponse.json({ error: "Could not save this item." }, { status: 500 });
   const row = upsertRow;
   const listId = row.list_id ? String(row.list_id) : null;

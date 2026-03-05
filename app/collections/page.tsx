@@ -238,10 +238,14 @@ export default function CollectionsPage() {
                         </div>
                         <div className="p-2.5">
                           <p className="text-xs text-zinc-100 truncate">{item.title}</p>
-                          <p className="text-[11px] text-zinc-400 mt-1">
-                            {(typeof item.userRating === "number" ? item.userRating : item.rating)?.toFixed(1) ?? "-"}
-                            /10
-                          </p>
+                          <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
+                            <p className="text-zinc-300">
+                              You: {typeof item.userRating === "number" ? `${item.userRating.toFixed(1)}/10` : "-"}
+                            </p>
+                            <p className="text-zinc-500">
+                              {typeof item.rating === "number" ? `${item.rating.toFixed(1)}/10` : "-"}
+                            </p>
+                          </div>
                         </div>
                       </article>
                     </Link>
