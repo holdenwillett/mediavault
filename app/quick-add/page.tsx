@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from "react";
 import type { MediaSearchItem, MediaType } from "@/lib/media/types";
 
 const STAR_COUNT = 10;
+const SKIPPED_STORAGE_KEY = "quick_add_skipped_v1";
 const TYPE_OPTIONS: Array<{ value: MediaType; label: string }> = [
   { value: "movie", label: "Movies" },
   { value: "tv", label: "TV Shows" },
@@ -14,6 +15,10 @@ const TYPE_OPTIONS: Array<{ value: MediaType; label: string }> = [
 
 function mediaTypeLabel(type: MediaType): string {
   return type === "tv" ? "TV" : type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+function itemKey(item: MediaSearchItem): string {
+  return `${item.source}:${item.mediaType}:${String(item.externalId)}`;
 }
 
 function shuffleItems<T>(arr: T[]): T[] {
@@ -37,7 +42,24 @@ export default function QuickAddPage() {
   const [showRating, setShowRating] = useState(false);
   const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [skippedKeys, setSkippedKeys] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    const raw = window.localStorage.getItem(SKIPPED_STORAGE_KEY);
+    if (!raw) return new Set();
+    try {
+      const parsed = JSON.parse(raw) as string[];
+      return new Set(parsed);
+    } catch {
+      return new Set();
+    }
+  });
   const requestIdRef = useRef(0);
+  const seenInSessionRef = useRef<Set<string>>(new Set());
+
+  const persistSkipped = (next: Set<string>) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SKIPPED_STORAGE_KEY, JSON.stringify(Array.from(next)));
+  };
 
   const current = items[index] ?? null;
 
@@ -45,22 +67,47 @@ export default function QuickAddPage() {
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
-    const res = await fetch(`/api/quick-add?type=${type}&page=${nextPage}`, { cache: "no-store" });
-    if (requestId !== requestIdRef.current) return false;
-    if (!res.ok) {
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(data.error ?? "Could not load items.");
-      setLoading(false);
-      return false;
+    const unskipped: MediaSearchItem[] = [];
+    const skipped: MediaSearchItem[] = [];
+    let cursorPage = nextPage;
+    let hasMorePages = false;
+    let attempts = 0;
+    const minFreshTarget = append ? 6 : 14;
+
+    while (attempts < 4) {
+      const res = await fetch(`/api/quick-add?type=${type}&page=${cursorPage}`, { cache: "no-store" });
+      if (requestId !== requestIdRef.current) return false;
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? "Could not load items.");
+        setLoading(false);
+        return false;
+      }
+
+      const data = (await res.json()) as { items?: MediaSearchItem[]; hasMore?: boolean; page?: number };
+      if (requestId !== requestIdRef.current) return false;
+      hasMorePages = Boolean(data.hasMore);
+
+      const shuffled = shuffleItems(data.items ?? []);
+      for (const item of shuffled) {
+        const key = itemKey(item);
+        if (seenInSessionRef.current.has(key)) continue;
+        seenInSessionRef.current.add(key);
+        if (skippedKeys.has(key)) skipped.push(item);
+        else unskipped.push(item);
+      }
+
+      if (unskipped.length >= minFreshTarget || !hasMorePages) break;
+      attempts += 1;
+      cursorPage += 1;
     }
-    const data = (await res.json()) as { items?: MediaSearchItem[]; hasMore?: boolean; page?: number };
-    if (requestId !== requestIdRef.current) return false;
-    const nextItems = shuffleItems(data.items ?? []);
+
+    const nextItems = [...unskipped, ...skipped];
     setItems((prev) => (append ? [...prev, ...nextItems] : nextItems));
-    setHasMore(Boolean(data.hasMore));
-    setPage(nextPage);
+    setHasMore(hasMorePages);
+    setPage(cursorPage);
     setLoading(false);
-    return true;
+    return nextItems.length > 0;
   };
 
   const getStarValue = (starIndex: number, clientX: number, rect: DOMRect) => {
@@ -69,6 +116,17 @@ export default function QuickAddPage() {
   };
 
   const moveToNext = async () => {
+    if (current) {
+      const key = itemKey(current);
+      setSkippedKeys((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        persistSkipped(next);
+        return next;
+      });
+    }
+
     setShowRating(false);
     setHoverRating(null);
 
@@ -209,6 +267,7 @@ export default function QuickAddPage() {
               }`}
               onClick={() => {
                 requestIdRef.current += 1;
+                seenInSessionRef.current = new Set();
                 setItems([]);
                 setIndex(0);
                 setPage(1);

@@ -264,14 +264,33 @@ export default function CollectionsPage() {
                   {grouped[status].map((item) => (
                     <Link key={item.id} href={`/${item.mediaType}/${item.externalId}`} className="group block">
                       <article className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-                        <div className="relative aspect-[2/3] bg-zinc-950">
+                        <div className="relative aspect-[2/3] overflow-hidden bg-zinc-950">
                           {item.posterUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={item.posterUrl}
-                              alt={item.title}
-                              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                            />
+                            item.mediaType === "game" ? (
+                              <div className="relative h-full w-full bg-zinc-950">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={item.posterUrl}
+                                  className="absolute inset-0 h-full w-full object-cover scale-125 opacity-45 transition-transform duration-300 group-hover:scale-[1.3]"
+                                  alt=""
+                                  aria-hidden="true"
+                                />
+                                <div className="absolute inset-0 bg-black/35" aria-hidden="true" />
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={item.posterUrl}
+                                  alt={item.title}
+                                  className="relative h-full w-full object-contain p-1.5 transition-transform duration-300 group-hover:scale-[1.03]"
+                                />
+                              </div>
+                            ) : (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={item.posterUrl}
+                                alt={item.title}
+                                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                              />
+                            )
                           ) : (
                             <div className="h-full w-full flex items-center justify-center text-xs text-zinc-500 px-2 text-center">
                               No Poster
@@ -281,11 +300,14 @@ export default function CollectionsPage() {
                             {mediaTypeLabel(item.mediaType)}
                           </span>
                         </div>
-                        <div className="p-2.5">
+                        <div className="bg-zinc-900 p-2.5">
                           <p className="text-xs text-zinc-100 truncate">{item.title}</p>
                           <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
                             <p className="text-zinc-300">
-                              You: {typeof item.userRating === "number" ? `${formatRatingValue(item.userRating)}/10` : "-"}
+                              You:{" "}
+                              {typeof item.userRating === "number"
+                                ? `${formatRatingValue(item.userRating)}/10 ⭐`
+                                : "-"}
                             </p>
                             <p className="text-zinc-500">
                               {typeof item.rating === "number" ? `${formatRatingValue(item.rating)}/10` : "-"}

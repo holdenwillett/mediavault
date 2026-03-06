@@ -52,24 +52,6 @@ function appendUnique(target: MediaSearchItem[], incoming: MediaSearchItem[]) {
   }
 }
 
-function mixTailoredAndPopular(tailored: MediaSearchItem[], popular: MediaSearchItem[]): MediaSearchItem[] {
-  const mixed: MediaSearchItem[] = [];
-  let t = 0;
-  let p = 0;
-
-  while (t < tailored.length || p < popular.length) {
-    for (let i = 0; i < 2 && t < tailored.length; i += 1) {
-      mixed.push(tailored[t]);
-      t += 1;
-    }
-    if (p < popular.length) {
-      mixed.push(popular[p]);
-      p += 1;
-    }
-  }
-  return mixed;
-}
-
 async function fetchTmdbPopular(type: "movie" | "tv", page: number, apiKey: string) {
   const res = await fetch(
     `https://api.themoviedb.org/3/discover/${type}?language=en-US&sort_by=popularity.desc&include_adult=false&vote_count.gte=50&page=${page}&api_key=${apiKey}`,
@@ -95,9 +77,9 @@ async function fetchRawgPopular(page: number, apiKey: string) {
   return { items, hasMore: Boolean(data.next) };
 }
 
-async function fetchTmdbRecommendations(type: "movie" | "tv", externalId: string, apiKey: string) {
+async function fetchTmdbRecommendations(type: "movie" | "tv", externalId: string, page: number, apiKey: string) {
   const res = await fetch(
-    `https://api.themoviedb.org/3/${type}/${encodeURIComponent(externalId)}/recommendations?language=en-US&page=1&api_key=${apiKey}`,
+    `https://api.themoviedb.org/3/${type}/${encodeURIComponent(externalId)}/recommendations?language=en-US&page=${page}&api_key=${apiKey}`,
     { cache: "no-store" }
   );
   if (!res.ok) return [];
@@ -107,10 +89,13 @@ async function fetchTmdbRecommendations(type: "movie" | "tv", externalId: string
     .filter((item) => !!item.posterUrl);
 }
 
-async function fetchRawgSuggestions(externalId: string, apiKey: string) {
-  const res = await fetch(`https://api.rawg.io/api/games/${encodeURIComponent(externalId)}/suggested?key=${apiKey}&page_size=20`, {
-    cache: "no-store",
-  });
+async function fetchRawgSuggestions(externalId: string, page: number, apiKey: string) {
+  const res = await fetch(
+    `https://api.rawg.io/api/games/${encodeURIComponent(externalId)}/suggested?key=${apiKey}&page_size=20&page=${page}`,
+    {
+      cache: "no-store",
+    }
+  );
   if (!res.ok) return [];
   const data = (await res.json()) as RawgListResponse;
   return (data.results ?? []).map(normalizeRawgGame).filter((item) => !!item.posterUrl);
@@ -169,37 +154,35 @@ export async function GET(req: Request) {
   }
 
   const tailoredItems: MediaSearchItem[] = [];
-  if (page === 1 && collectionRows.length > 0) {
-    const seeds = collectionRows
-      .filter((row) => row.media_type === type)
-      .sort((a, b) => scoreSeed(b) - scoreSeed(a))
-      .slice(0, 4);
+  const seeds = collectionRows
+    .filter((row) => row.media_type === type)
+    .sort((a, b) => scoreSeed(b) - scoreSeed(a))
+    .slice(0, 8);
 
-    if (seeds.length > 0) {
-      if ((type === "movie" || type === "tv") && process.env.TMDB_API_KEY) {
-        const batches = await Promise.all(
-          seeds
-            .filter((row) => row.source === "tmdb")
-            .map((row) => fetchTmdbRecommendations(type, row.external_id, process.env.TMDB_API_KEY as string))
-        );
-        for (const batch of batches) appendUnique(tailoredItems, batch);
-      }
-      if (type === "game" && process.env.RAWG_API_KEY) {
-        const batches = await Promise.all(
-          seeds
-            .filter((row) => row.source === "rawg")
-            .map((row) => fetchRawgSuggestions(row.external_id, process.env.RAWG_API_KEY as string))
-        );
-        for (const batch of batches) appendUnique(tailoredItems, batch);
-      }
+  if (seeds.length > 0) {
+    if ((type === "movie" || type === "tv") && process.env.TMDB_API_KEY) {
+      const batches = await Promise.all(
+        seeds
+          .filter((row) => row.source === "tmdb")
+          .map((row) => fetchTmdbRecommendations(type, row.external_id, page, process.env.TMDB_API_KEY as string))
+      );
+      for (const batch of batches) appendUnique(tailoredItems, batch);
+    }
+    if (type === "game" && process.env.RAWG_API_KEY) {
+      const batches = await Promise.all(
+        seeds
+          .filter((row) => row.source === "rawg")
+          .map((row) => fetchRawgSuggestions(row.external_id, page, process.env.RAWG_API_KEY as string))
+      );
+      for (const batch of batches) appendUnique(tailoredItems, batch);
     }
   }
 
-  const mixed = mixTailoredAndPopular(tailoredItems, popularItems);
-  const filtered = mixed.filter((item) => !existingKeys.has(toKey(item.source, item.mediaType, item.externalId)));
+  const prioritized = [...tailoredItems, ...popularItems];
+  const filtered = prioritized.filter((item) => !existingKeys.has(toKey(item.source, item.mediaType, item.externalId)));
   const pageSize = 20;
   const resultItems = filtered.slice(0, pageSize);
-  const hasMore = popularHasMore || filtered.length > pageSize;
+  const hasMore = tailoredItems.length > pageSize || popularHasMore || filtered.length > pageSize;
 
   return NextResponse.json({ items: resultItems, hasMore, page });
 }
