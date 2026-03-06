@@ -200,14 +200,14 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
             className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/70 p-2"
             onMouseLeave={() => setHoverRating(null)}
           >
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex w-full flex-nowrap justify-between gap-1 overflow-hidden">
               {Array.from({ length: STAR_COUNT }, (_, i) => {
                 const fill = Math.max(0, Math.min(1, displayRating - i));
                 return (
                   <button
                     key={i}
                     type="button"
-                    className="relative h-8 w-8 disabled:opacity-60"
+                    className="relative h-7 w-7 shrink-0 disabled:opacity-60"
                     disabled={saving}
                     onMouseMove={(e) => setHoverRating(getHoverValue(i, e.clientX, e.currentTarget.getBoundingClientRect()))}
                     onClick={(e) => {
@@ -218,7 +218,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
                     }}
                     aria-label={`Set rating to ${i + 1}`}
                   >
-                    <svg viewBox="0 0 24 24" className="h-8 w-8">
+                    <svg viewBox="0 0 24 24" className="h-7 w-7">
                       <path
                         d="M12 2.2l2.8 5.7 6.3.9-4.6 4.4 1.1 6.2L12 16.5l-5.6 2.9 1.1-6.2-4.6-4.4 6.3-.9L12 2.2z"
                         fill="none"
@@ -227,7 +227,7 @@ export function CollectionControls({ mediaType, externalId, source, title, poste
                       />
                     </svg>
                     <span className="pointer-events-none absolute inset-0 overflow-hidden" style={{ width: `${fill * 100}%` }}>
-                      <svg viewBox="0 0 24 24" className="h-8 w-8">
+                      <svg viewBox="0 0 24 24" className="h-7 w-7">
                         <path d="M12 2.2l2.8 5.7 6.3.9-4.6 4.4 1.1 6.2L12 16.5l-5.6 2.9 1.1-6.2-4.6-4.4 6.3-.9L12 2.2z" fill="#facc15" />
                       </svg>
                     </span>

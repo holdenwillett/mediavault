@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { MediaSearchItem, MediaSearchResponse, MediaType } from "@/lib/media/types";
 
@@ -106,6 +106,14 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+
+  const recommendationGroups = useMemo(() => {
+    return {
+      movie: recommendations.filter((item) => item.mediaType === "movie"),
+      tv: recommendations.filter((item) => item.mediaType === "tv"),
+      game: recommendations.filter((item) => item.mediaType === "game"),
+    };
+  }, [recommendations]);
 
   useEffect(() => {
     if (query.trim().length >= 2 || recommendationsLoaded) return;
@@ -312,10 +320,39 @@ export default function SearchPage() {
           )}
           {recommendationsLoading && <p className="text-sm text-zinc-500">Loading recommendations...</p>}
           {!recommendationsLoading && recommendations.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
-              {recommendations.map((item) => (
-                <MediaCard key={item.id} item={item} />
-              ))}
+            <div className="space-y-8">
+              {recommendationGroups.movie.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">Movies</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
+                    {recommendationGroups.movie.map((item) => (
+                      <MediaCard key={item.id} item={item} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {recommendationGroups.tv.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">TV</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
+                    {recommendationGroups.tv.map((item) => (
+                      <MediaCard key={item.id} item={item} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {recommendationGroups.game.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">Games</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6">
+                    {recommendationGroups.game.map((item) => (
+                      <MediaCard key={item.id} item={item} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {!recommendationsLoading && recommendationsLoaded && recommendations.length === 0 && (
